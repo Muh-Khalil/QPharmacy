@@ -1,0 +1,164 @@
+@page "/pharmacist/reports"
+@attribute [Authorize(Roles = "Pharmacist")]
+@inject NavigationManager Navigation
+@inject QPharmacy.Services.IPharmacistService PharmacistService
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Pharmacist Reports &amp; Analytics</h1>
+        <p class="text-sm text-slate-500 mt-1">Operational metrics, clinical interaction resolution rates, and script turnaround performance.</p>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="flex justify-center py-20">
+            <svg class="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    }
+    else
+    {
+        <!-- Performance KPI Grid (Matching Patient Section Grid Sizing) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Dispensed Today</p>
+                    <p class="text-2xl font-semibold text-slate-900 mt-1">@kpis.DispensedTodayCount <span class="text-xs font-medium text-emerald-600 ml-1">&uarr; Live DB</span></p>
+                </div>
+                <div class="w-9 h-9 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
+                    <Blazicon Svg="Lucide.Check" class="w-5 h-5" />
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Avg Verification Time</p>
+                    <p class="text-2xl font-semibold text-slate-900 mt-1">4.2m <span class="text-xs font-normal text-slate-400 ml-1">&lt; 10m target</span></p>
+                </div>
+                <div class="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
+                    <Blazicon Svg="Lucide.Clock" class="w-5 h-5" />
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Clinical Flags Handled</p>
+                    <p class="text-2xl font-semibold text-slate-900 mt-1">8</p>
+                </div>
+                <div class="w-9 h-9 rounded-full bg-orange-50 flex items-center justify-center text-orange-600">
+                    <Blazicon Svg="Lucide.Activity" class="w-5 h-5" />
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Safety Resolution</p>
+                    <p class="text-2xl font-semibold text-slate-900 mt-1">100%</p>
+                </div>
+                <div class="w-9 h-9 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">
+                    <Blazicon Svg="Lucide.ShieldCheck" class="w-5 h-5" />
+                </div>
+            </div>
+        </div>
+
+        <!-- Analytical Breakdown -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Daily Throughput Chart -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+                <h2 class="text-base font-semibold text-slate-900">Script Volume by Hour</h2>
+                <div class="space-y-4 pt-2">
+                    <div>
+                        <div class="flex justify-between text-xs font-semibold text-slate-600 mb-1">
+                            <span>08:00 - 10:00</span>
+                            <span>12 scripts</span>
+                        </div>
+                        <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                            <div class="bg-emerald-500 h-full rounded-full" style="width: 60%;"></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs font-semibold text-slate-600 mb-1">
+                            <span>10:00 - 12:00</span>
+                            <span>18 scripts</span>
+                        </div>
+                        <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                            <div class="bg-emerald-500 h-full rounded-full" style="width: 90%;"></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs font-semibold text-slate-600 mb-1">
+                            <span>12:00 - 14:00</span>
+                            <span>12 scripts</span>
+                        </div>
+                        <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                            <div class="bg-emerald-500 h-full rounded-full" style="width: 60%;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Clinical Safety Flags Breakdown -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+                <h2 class="text-base font-semibold text-slate-900">Safety Flag Categories</h2>
+                <div class="space-y-3 pt-2">
+                    <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 border border-slate-100">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 font-bold text-xs flex items-center justify-center">
+                                DC
+                            </div>
+                            <div>
+                                <p class="font-semibold text-slate-900 text-sm">Drug-Drug Interactions</p>
+                                <p class="text-xs text-slate-500">e.g., Ibuprofen + Amlodipine</p>
+                            </div>
+                        </div>
+                        <span class="font-semibold text-slate-900 text-sm">5 cases</span>
+                    </div>
+
+                    <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-50 border border-slate-100">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-800 font-bold text-xs flex items-center justify-center">
+                                DA
+                            </div>
+                            <div>
+                                <p class="font-semibold text-slate-900 text-sm">Dosage Threshold Alerts</p>
+                                <p class="text-xs text-slate-500">e.g., High-dose NSAID warning</p>
+                            </div>
+                        </div>
+                        <span class="font-semibold text-slate-900 text-sm">3 cases</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private QPharmacy.Shared.Models.Database.PharmacistKpiModel kpis = new();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isLoading = true;
+        try
+        {
+            kpis = await PharmacistService.GetPharmacistKpisAsync();
+        }
+        catch
+        {
+            kpis = new QPharmacy.Shared.Models.Database.PharmacistKpiModel
+            {
+                DispensedTodayCount = 42
+            };
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

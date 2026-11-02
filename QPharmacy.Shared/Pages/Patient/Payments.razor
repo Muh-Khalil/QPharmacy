@@ -1,0 +1,362 @@
+@page "/patient/payments"
+@attribute [Authorize(Roles = "Patient")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@inject IPatientService PatientService
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Medical Aid &amp; Payments - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Success Alert / Toast -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between space-x-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div class="flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="DismissNotification" class="text-white hover:text-emerald-100 transition-colors">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Medical Aid &amp; Payments</h1>
+            <p class="text-sm text-slate-500 mt-1">Your cover, claims and saved payment methods.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <button @onclick="ToggleAddCardModal" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg font-medium shadow-sm transition-colors text-sm flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Add payment method</span>
+            </button>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="bg-white shadow-sm rounded-xl border border-slate-200 p-12 text-center text-slate-500">
+            <svg class="animate-spin h-8 w-8 mx-auto text-emerald-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Loading payment details...</span>
+        </div>
+    }
+    else
+    {
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <!-- Medical Aid Card (Left) -->
+            <div class="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div>
+                    <h2 class="text-base font-semibold text-slate-900 mb-6">Medical aid</h2>
+                    
+                    @if (medicalAid == null)
+                    {
+                        <div class="text-sm text-slate-500 py-4">No medical aid linked to this profile.</div>
+                    }
+                    else
+                    {
+                        <div class="flex justify-between items-start mb-6">
+                            <div>
+                                <h3 class="font-semibold text-slate-900 text-sm">@medicalAid.SchemeName &middot; @medicalAid.PlanName</h3>
+                                <p class="text-xs text-slate-500 mt-1">Member no. @medicalAid.MemberNumber</p>
+                            </div>
+                            <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                                @medicalAid.Status
+                            </span>
+                        </div>
+
+                        <!-- Progress Bar allowance -->
+                        <div class="space-y-2 mt-4">
+                            <div class="flex justify-between items-center text-xs text-slate-500">
+                                <span class="font-medium">Annual medicine benefit used</span>
+                            </div>
+                            @{
+                                var percentageUsed = medicalAid.AnnualLimit > 0 ? (int)((medicalAid.AmountUsed / medicalAid.AnnualLimit) * 100) : 0;
+                            }
+                            <div class="w-full bg-slate-100 rounded-full h-2">
+                                <div class="bg-brand-DEFAULT h-2 rounded-full" style="width: @(percentageUsed)%"></div>
+                            </div>
+                            <p class="text-xs text-slate-500 pt-1">R @medicalAid.AmountUsed.ToString("N0") of R @medicalAid.AnnualLimit.ToString("N0") used</p>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- Recent Claims Card (Right) -->
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div>
+                    <h2 class="text-base font-semibold text-slate-900 mb-4">Recent claims</h2>
+                    
+                    @if (claims == null || !claims.Any())
+                    {
+                        <div class="text-sm text-slate-500 py-6 text-center">No recent claims submitted.</div>
+                    }
+                    else
+                    {
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-slate-100">
+                                <thead>
+                                    <tr>
+                                        <th scope="col" class="text-left text-xxs font-bold text-slate-400 uppercase tracking-wider pb-3">Claim</th>
+                                        <th scope="col" class="text-left text-xxs font-bold text-slate-400 uppercase tracking-wider pb-3">Amount</th>
+                                        <th scope="col" class="text-right text-xxs font-bold text-slate-400 uppercase tracking-wider pb-3">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    @foreach (var claim in claims)
+                                    {
+                                        <tr>
+                                            <td class="py-3 text-xs font-semibold text-slate-900">@claim.Description</td>
+                                            <td class="py-3 text-xs text-slate-500">R @claim.Amount.ToString("N2")</td>
+                                            <td class="py-3 text-right">
+                                                @if (claim.Status == "Approved")
+                                                {
+                                                    <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                                                        Approved
+                                                    </span>
+                                                }
+                                                else if (claim.Status == "Pending")
+                                                {
+                                                    <span class="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-semibold text-orange-700 ring-1 ring-inset ring-orange-600/20">
+                                                        Pending
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-600/20">
+                                                        Rejected
+                                                    </span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Saved Payment Methods Card (Full Width Below) -->
+        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+            <h2 class="text-base font-semibold text-slate-900 mb-6">Saved payment methods</h2>
+
+            @if (paymentMethods == null || !paymentMethods.Any())
+            {
+                <div class="text-sm text-slate-500 py-6 text-center border-2 border-dashed border-slate-100 rounded-xl">
+                    No saved cards. Click "+ Add payment method" to save a card.
+                </div>
+            }
+            else
+            {
+                <div class="space-y-4">
+                    @foreach (var card in paymentMethods)
+                    {
+                        <div class="flex items-center justify-between p-4 border border-slate-100 rounded-xl hover:bg-slate-50/50 transition-colors">
+                            <div class="flex items-center space-x-4">
+                                <div class="w-12 h-8 rounded-md bg-slate-50 flex items-center justify-center border border-slate-200 text-slate-600">
+                                    <Blazicon Svg="Lucide.CreditCard" class="w-6 h-6" />
+                                </div>
+                                <div>
+                                    <div class="text-sm font-semibold text-slate-900">@card.CardType &bull;&bull;&bull;&bull; @card.LastFour</div>
+                                    <div class="text-xs text-slate-500 mt-0.5">Expires @card.ExpiryDate</div>
+                                </div>
+                            </div>
+                            <div>
+                                @if (card.IsDefault)
+                                {
+                                    <span class="inline-flex items-center rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                                        Default
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<!-- Add Payment Method Modal -->
+@if (showAddCardModal)
+{
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-md w-full mx-4 p-6 animate-in fade-in zoom-in-95 duration-200">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-lg font-semibold text-slate-900">Add payment method</h3>
+                <button @onclick="ToggleAddCardModal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Card Type</label>
+                    <select @bind="cardTypeInput" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500">
+                        <option value="Visa">Visa</option>
+                        <option value="Mastercard">Mastercard</option>
+                        <option value="American Express">American Express</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Card Number</label>
+                    <input type="text" @bind="cardNumberInput" placeholder="4111 2222 3333 4821" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Expiry Date</label>
+                        <input type="text" @bind="expiryDateInput" placeholder="MM/YY" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">CVV</label>
+                        <input type="password" placeholder="•••" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                    </div>
+                </div>
+                <div class="flex items-center space-x-2 pt-2">
+                    <input type="checkbox" @bind="isDefaultInput" id="isDefaultCheckbox" class="rounded border-slate-200 text-slate-900 focus:ring-slate-900/20" />
+                    <label for="isDefaultCheckbox" class="text-sm text-slate-600 font-medium select-none">Set as default payment method</label>
+                </div>
+                <div class="flex space-x-3 pt-4">
+                    <button type="button" @onclick="ToggleAddCardModal" class="flex-1 bg-slate-50 hover:bg-slate-100 text-slate-700 font-medium px-4 py-2.5 rounded-lg text-sm border border-slate-200 transition-colors">
+                        Cancel
+                    </button>
+                    <button type="button" @onclick="HandleAddCard" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-medium px-4 py-2.5 rounded-lg text-sm transition-colors shadow-sm">
+                        Save card
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .text-xxs {
+        font-size: 0.65rem;
+    }
+</style>
+
+@code {
+    private MedicalAidModel? medicalAid;
+    private List<ClaimModel> claims = new();
+    private List<PaymentMethodModel> paymentMethods = new();
+    private bool isLoading = true;
+
+    private bool showAddCardModal = false;
+    private string cardTypeInput = "Visa";
+    private string cardNumberInput = "";
+    private string expiryDateInput = "";
+    private bool isDefaultInput = false;
+
+    private string? notificationMessage;
+    private Guid patientId = Guid.Empty;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var storedId = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authUserId");
+        if (Guid.TryParse(storedId, out var parsedId))
+        {
+            patientId = parsedId;
+        }
+
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            var medicalAidTask = PatientService.GetMedicalAidDetailsAsync(patientId);
+            var claimsTask = PatientService.GetRecentClaimsAsync(patientId);
+            var paymentMethodsTask = PatientService.GetSavedPaymentMethodsAsync(patientId);
+
+            await Task.WhenAll(medicalAidTask, claimsTask, paymentMethodsTask);
+
+            medicalAid = await medicalAidTask;
+            claims = (await claimsTask).ToList();
+            paymentMethods = (await paymentMethodsTask).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading payments: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ToggleAddCardModal()
+    {
+        showAddCardModal = !showAddCardModal;
+        if (showAddCardModal)
+        {
+            cardNumberInput = "";
+            expiryDateInput = "";
+            isDefaultInput = false;
+            cardTypeInput = "Visa";
+        }
+    }
+
+    private async Task HandleAddCard()
+    {
+        if (string.IsNullOrWhiteSpace(cardNumberInput) || string.IsNullOrWhiteSpace(expiryDateInput))
+        {
+            notificationMessage = "Please fill in all card details!";
+            return;
+        }
+
+        // Extract last 4 digits
+        var cleanNumber = new string(cardNumberInput.Where(char.IsDigit).ToArray());
+        var lastFour = cleanNumber.Length >= 4 ? cleanNumber.Substring(cleanNumber.Length - 4) : "1111";
+
+        var newPm = new PaymentMethodModel
+        {
+            Id = Guid.NewGuid(),
+            PatientId = patientId,
+            CardType = cardTypeInput,
+            LastFour = lastFour,
+            ExpiryDate = expiryDateInput,
+            GatewayToken = "tok_" + Guid.NewGuid().ToString().Substring(0, 8),
+            IsDefault = isDefaultInput,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var success = await PatientService.AddPaymentMethodAsync(newPm);
+        if (success)
+        {
+            // Reload list
+            var pmResult = await PatientService.GetSavedPaymentMethodsAsync(patientId);
+            paymentMethods = pmResult.ToList();
+
+            notificationMessage = "Payment method added successfully!";
+            showAddCardModal = false;
+
+            StateHasChanged();
+
+            // Auto-dismiss toast
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(3000);
+                notificationMessage = null;
+                await InvokeAsync(StateHasChanged);
+            });
+        }
+    }
+
+    private void DismissNotification()
+    {
+        notificationMessage = null;
+    }
+}

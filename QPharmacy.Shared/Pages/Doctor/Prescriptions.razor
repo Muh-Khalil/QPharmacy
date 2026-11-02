@@ -1,0 +1,354 @@
+@page "/doctor/prescriptions"
+@attribute [Authorize(Roles = "Doctor")]
+@attribute [Authorize(Policy = AuthorizationPolicies.IssuePrescription)]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@inject IDoctorService DoctorService
+@inject NavigationManager Navigation
+@inject ICurrentUserContext CurrentUser
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Prescriptions - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Success Alert / Toast -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between space-x-4 animate-fade-in max-w-md">
+            <div class="flex items-center space-x-3">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white shrink-0" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="DismissNotification" class="text-white hover:text-emerald-100 transition-colors shrink-0 cursor-pointer">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Prescriptions</h1>
+            <p class="text-sm text-slate-500 mt-1">Issue, digitally sign, and route prescriptions to verified partner pharmacies.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <button @onclick="FocusNewPrescription" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-xs transition-colors flex items-center space-x-2 cursor-pointer">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>New prescription</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- New Prescription Form Card -->
+    <div class="bg-white border border-slate-200 shadow-sm rounded-2xl p-6 md:p-8 mb-8">
+        <div class="flex items-center space-x-3 pb-5 mb-6 border-b border-slate-100">
+            <div class="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200/70 flex items-center justify-center text-emerald-700 shadow-2xs">
+                <Blazicon Svg="Lucide.Plus" class="w-5 h-5" />
+            </div>
+            <div>
+                <h2 class="text-base font-bold text-slate-900">Issue New Digital Prescription</h2>
+                <p class="text-xs text-slate-500">Provide precise dosage and dispense quantities for pharmacy stock fulfillment.</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+            <!-- Patient Dropdown -->
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Patient</label>
+                <div class="relative">
+                    <select @bind="selectedPatientId" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs">
+                        @foreach (var patient in availablePatients)
+                        {
+                            <option value="@patient.PatientId">@patient.PatientName (@patient.MedicalAid)</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <!-- Preferred Pharmacy Dropdown -->
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Preferred Partner Pharmacy</label>
+                <select @bind="selectedPharmacy" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs">
+                    <option value="Clicks, Claremont">Clicks, Claremont (Primary Partner)</option>
+                    <option value="Dis-Chem, Tokai">Dis-Chem, Tokai</option>
+                    <option value="Clicks, Rondebosch">Clicks, Rondebosch</option>
+                </select>
+            </div>
+
+            <!-- Medication Input -->
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Medication Name &amp; Strength</label>
+                <input type="text"
+                       @bind="medicationInput"
+                       placeholder="e.g. Metformin 500mg or Atorvastatin 20mg"
+                       class="w-full rounded-xl border border-slate-200 p-2.5 text-sm bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs" />
+            </div>
+
+            <!-- Dosage Instructions -->
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Dosage Instructions / Frequency</label>
+                <input type="text"
+                       @bind="dosageInput"
+                       placeholder="e.g. Take 1 tablet twice daily after meals"
+                       class="w-full rounded-xl border border-slate-200 p-2.5 text-sm bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs" />
+            </div>
+
+            <!-- Treatment Duration -->
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Treatment Duration</label>
+                <select @bind="durationInput" class="w-full rounded-xl border border-slate-200 p-2.5 text-sm bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs">
+                    <option value="15 days">15 Days (Acute Course)</option>
+                    <option value="30 days">30 Days (Standard 1 Month)</option>
+                    <option value="60 days">60 Days (2 Months)</option>
+                    <option value="90 days">90 Days (3 Months Chronic)</option>
+                </select>
+            </div>
+
+            <!-- Dispense Quantity -->
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                    Dispense Quantity (Packs / Units)
+                </label>
+                <input type="text"
+                       @bind="quantityInput"
+                       placeholder="e.g. 60 tablets (1 box)"
+                       class="w-full rounded-xl border border-slate-200 p-2.5 text-sm bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs" />
+            </div>
+        </div>
+
+        <!-- Clarification Helper Box -->
+        <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 mb-6 flex items-start space-x-2.5 text-xs text-slate-500">
+            <Blazicon Svg="Lucide.Info" class="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <span>
+                <strong>Duration</strong> defines length of therapy (e.g. 30 days). <strong>Quantity</strong> specifies physical units to reserve and dispense (e.g. 60 tablets / 1 box).
+            </span>
+        </div>
+
+        <!-- Submit Action Button -->
+        <div class="flex items-center space-x-3">
+            <button @onclick="SendToPharmacy" class="bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold px-6 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Send" class="w-4 h-4" />
+                <span>Send to Pharmacy for Verification</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Recently Issued Table Card -->
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6 md:p-8">
+        <div class="flex items-center justify-between mb-5">
+            <div>
+                <h2 class="text-base font-bold text-slate-900">Recently Issued Prescriptions</h2>
+                <p class="text-xs text-slate-500 mt-0.5">Audit log of prescriptions sent from your practice to pharmacy partners.</p>
+            </div>
+            <span class="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+                @recentlyIssued.Count total issued
+            </span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600 border-collapse min-w-[850px]">
+                <thead class="bg-slate-50/75 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                    <tr>
+                        <th class="px-5 py-3.5 whitespace-nowrap">Patient</th>
+                        <th class="px-4 py-3.5 whitespace-nowrap">Medication</th>
+                        <th class="px-4 py-3.5 whitespace-nowrap">Dosage &amp; Duration</th>
+                        <th class="px-4 py-3.5 whitespace-nowrap">Sent To (Pharmacy)</th>
+                        <th class="px-4 py-3.5 whitespace-nowrap">Status</th>
+                        <th class="px-5 py-3.5 text-right whitespace-nowrap">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @if (recentlyIssued == null || !recentlyIssued.Any())
+                    {
+                        <tr>
+                            <td colspan="6" class="px-6 py-10 text-center text-slate-400">
+                                <div class="flex flex-col items-center justify-center">
+                                    <Blazicon Svg="Lucide.FileText" class="w-8 h-8 text-slate-300 mb-2" />
+                                    <p class="font-medium text-slate-500">No recently issued prescriptions.</p>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var item in recentlyIssued)
+                        {
+                            <tr class="hover:bg-slate-50/70 transition-colors">
+                                <td class="px-5 py-4 whitespace-nowrap">
+                                    <div class="flex items-center space-x-2.5">
+                                        <div class="w-7 h-7 rounded-full bg-teal-100 text-teal-800 font-bold text-xs flex items-center justify-center shrink-0">
+                                            @(string.IsNullOrEmpty(item.PatientName) ? "P" : item.PatientName[..1])
+                                        </div>
+                                        <span class="font-semibold text-slate-900 text-sm">@item.PatientName</span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-4 whitespace-nowrap">
+                                    <div class="flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Package" class="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                        <span class="text-slate-900 font-semibold text-sm">@item.Medication</span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-4 whitespace-nowrap">
+                                    <span class="text-xs font-medium text-slate-600 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200/60 inline-block">
+                                        @item.DosageDuration
+                                    </span>
+                                </td>
+                                <td class="px-4 py-4 whitespace-nowrap">
+                                    <div class="flex items-center space-x-1 text-xs text-slate-600 font-medium">
+                                        <Blazicon Svg="Lucide.Store" class="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                        <span>@item.PreferredPharmacy</span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-4 whitespace-nowrap">
+                                    @if (item.Status == "Awaiting verification" || item.Status == "Pending" || item.Status == "AwaitingVerification")
+                                    {
+                                        <span class="bg-amber-50 text-amber-800 border border-amber-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5 whitespace-nowrap">
+                                            <Blazicon Svg="Lucide.Clock" class="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                            <span>Awaiting verification</span>
+                                        </span>
+                                    }
+                                    else if (item.Status == "Verified" || item.Status == "Approved")
+                                    {
+                                        <span class="bg-emerald-50 text-emerald-800 border border-emerald-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5 whitespace-nowrap">
+                                            <Blazicon Svg="Lucide.Check" class="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                            <span>Approved &amp; Dispensing</span>
+                                        </span>
+                                    }
+                                    else if (item.Status == "Queried")
+                                    {
+                                        <span class="bg-blue-50 text-blue-800 border border-blue-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5 whitespace-nowrap">
+                                            <Blazicon Svg="Lucide.MessageSquare" class="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                                            <span>Pharmacist Query</span>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap">
+                                            @item.Status
+                                        </span>
+                                    }
+                                </td>
+                                <td class="px-5 py-4 text-right whitespace-nowrap">
+                                    @if (item.Status == "Queried")
+                                    {
+                                        <button @onclick="() => ResolveQueryAsync(item)" class="text-xs font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer mr-2">
+                                            Respond
+                                        </button>
+                                    }
+                                    @if (item.Status is "AwaitingVerification" or "Awaiting verification" or "Queried")
+                                    {
+                                        <button @onclick="() => CancelPrescriptionAsync(item)" class="text-xs font-semibold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">
+                                            Cancel
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<DoctorPrescriptionModel> recentlyIssued = new();
+    private List<DoctorPatientModel> availablePatients = [];
+    private Guid selectedPatientId;
+    private string selectedPharmacy = "Clicks, Claremont";
+    private string medicationInput = "";
+    private string dosageInput = "";
+    private string durationInput = "30 days";
+    private string quantityInput = "30 units (1 pack)";
+    private Guid currentDoctorId;
+    private string? notificationMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CurrentUser.RefreshAsync();
+        currentDoctorId = CurrentUser.UserId;
+        availablePatients = (await DoctorService.GetDoctorPatientsAsync(currentDoctorId)).ToList();
+        selectedPatientId = availablePatients.FirstOrDefault()?.PatientId ?? Guid.Empty;
+        await LoadPrescriptionsAsync();
+    }
+
+    private async Task LoadPrescriptionsAsync()
+    {
+        var result = await DoctorService.GetRecentlyIssuedPrescriptionsAsync(currentDoctorId);
+        recentlyIssued = result.ToList();
+    }
+
+    private async Task SendToPharmacy()
+    {
+        if (selectedPatientId == Guid.Empty || string.IsNullOrWhiteSpace(medicationInput))
+        {
+            notificationMessage = selectedPatientId == Guid.Empty ? "Please select a patient." : "Please enter medication name.";
+            StateHasChanged();
+            return;
+        }
+
+        var dosageText = string.IsNullOrWhiteSpace(dosageInput) ? "Take as directed" : dosageInput.Trim();
+        var durationText = string.IsNullOrWhiteSpace(durationInput) ? "30 days" : durationInput.Trim();
+        var quantityText = string.IsNullOrWhiteSpace(quantityInput) ? "1 pack" : quantityInput.Trim();
+        var combinedDetails = $"{dosageText} · {durationText} (Qty: {quantityText})";
+
+        var newPrescription = new DoctorPrescriptionModel
+        {
+            Id = Guid.NewGuid(),
+            PatientId = selectedPatientId,
+            PatientName = availablePatients.First(patient => patient.PatientId == selectedPatientId).PatientName,
+            PreferredPharmacy = selectedPharmacy,
+            Medication = medicationInput.Trim(),
+            DosageDuration = combinedDetails,
+            Status = "Awaiting verification",
+            CreatedAt = DateTime.Now
+        };
+
+        await DoctorService.CreatePrescriptionAsync(newPrescription);
+        await LoadPrescriptionsAsync();
+
+        medicationInput = "";
+        dosageInput = "";
+
+        notificationMessage = $"Prescription sent to {selectedPharmacy} for pharmacist verification!";
+        StateHasChanged();
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3500);
+            notificationMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void FocusNewPrescription()
+    {
+        medicationInput = "";
+        dosageInput = "";
+    }
+
+    private async Task ResolveQueryAsync(DoctorPrescriptionModel prescription)
+    {
+        var response = await JSRuntime.InvokeAsync<string?>("prompt", "Response to the pharmacist query:");
+        if (string.IsNullOrWhiteSpace(response)) return;
+        await DoctorService.ResolvePrescriptionQueryAsync(prescription.Id, response);
+        await LoadPrescriptionsAsync();
+        notificationMessage = "Response sent; the prescription returned to verification.";
+    }
+
+    private async Task CancelPrescriptionAsync(DoctorPrescriptionModel prescription)
+    {
+        var reason = await JSRuntime.InvokeAsync<string?>("prompt", "Reason for cancelling this prescription:");
+        if (string.IsNullOrWhiteSpace(reason)) return;
+        await DoctorService.CancelPrescriptionAsync(prescription.Id, reason);
+        await LoadPrescriptionsAsync();
+        notificationMessage = "Prescription cancelled.";
+    }
+
+    private void DismissNotification()
+    {
+        notificationMessage = null;
+    }
+}

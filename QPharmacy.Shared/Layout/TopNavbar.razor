@@ -1,0 +1,147 @@
+<nav class="bg-brand-dark text-white px-4 sm:px-6 py-3 flex items-center justify-between border-b border-brand-DEFAULT shadow-sm z-50 sticky top-0">
+@using QPharmacy.Services
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
+@inject SidebarService SidebarService
+@inject IAuthService AuthService
+@inject JwtAuthenticationStateProvider AuthenticationStateProvider
+@implements IDisposable
+
+    <!-- Logo & Mobile Toggle Button -->
+    <div class="flex items-center space-x-2 sm:space-x-3 w-1/3 md:w-1/4">
+        <!-- Mobile Hamburger Toggle (hidden on tablet/desktop via md:hidden) -->
+        <button @onclick="ToggleMobileSidebar" class="md:hidden p-2 rounded-lg text-slate-300 hover:text-white hover:bg-brand-DEFAULT transition-colors cursor-pointer" title="Toggle Menu">
+            <Blazicon Svg="Lucide.Menu" class="w-5 h-5" />
+        </button>
+
+        <!-- Logo Icon -->
+        <div class="w-8 h-8 rounded-full bg-brand-light flex items-center justify-center text-brand-dark font-bold shrink-0">
+            <Blazicon Svg="Lucide.Plus" class="w-5 h-5" />
+        </div>
+        <span class="text-lg sm:text-xl font-bold tracking-tight cursor-pointer hidden sm:inline" @onclick="NavigateHome">QPharmacy</span>
+    </div>
+
+    <!-- Authenticated portal indicator -->
+    <div class="flex-1 flex justify-center">
+        <div class="bg-brand-DEFAULT rounded-full px-5 py-1.5 text-xs sm:text-sm font-semibold text-white shadow-sm">
+            @RoleDisplayName portal
+        </div>
+    </div>
+
+    <!-- User Profile -->
+    <div class="flex items-center justify-end space-x-2 sm:space-x-4 w-1/3 md:w-1/4">
+        <div class="text-right hidden sm:block">
+            <div class="text-xs sm:text-sm font-medium text-white">
+                @if (!string.IsNullOrWhiteSpace(storedName) && storedName != "Guest")
+                {
+                    @if (CurrentRole == "Doctor" && !storedName.StartsWith("Dr."))
+                    {
+                        <span>Dr. @storedName &middot; Doctor</span>
+                    }
+                    else
+                    {
+                        <span>@storedName &middot; @CurrentRole</span>
+                    }
+                }
+                else if (CurrentRole == "Pharmacist")
+                {
+                    <span>S. Dlamini &middot; Pharmacist</span>
+                }
+                else if (CurrentRole == "Doctor")
+                {
+                    <span>Dr. Sarah Khan &middot; Doctor</span>
+                }
+                else if (CurrentRole == "Admin")
+                {
+                    <span>Admin User &middot; Super Admin</span>
+                }
+                else
+                {
+                    <span>Patient User &middot; Patient</span>
+                }
+            </div>
+        </div>
+        <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-teal-500 flex items-center justify-center text-white font-bold overflow-hidden border-2 border-teal-400/30 shrink-0">
+            <img src="https://i.pravatar.cc/150?u=thandiwe" alt="User Avatar" class="w-full h-full object-cover" />
+        </div>
+        <button @onclick="LogoutAsync" class="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-brand-DEFAULT transition-colors" title="Sign out">
+            <Blazicon Svg="Lucide.LogOut" class="w-5 h-5" />
+        </button>
+    </div>
+</nav>    
+
+@code {
+    private string storedName = "Guest";
+    private string currentUri = "";
+    private string authenticatedRole = "Patient";
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUri = Navigation.Uri;
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        authenticatedRole = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? "Patient";
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        currentUri = e.Location;
+        StateHasChanged();
+    }
+
+    private void ToggleMobileSidebar()
+    {
+        SidebarService.Toggle();
+    }
+
+    private string CurrentRole => authenticatedRole;
+    private string RoleDisplayName => CurrentRole == "Admin" ? "Super Admin" : CurrentRole;
+
+    private void NavigateHome()
+    {
+        switch (CurrentRole)
+        {
+            case "Pharmacist":
+                Navigation.NavigateTo("/pharmacist/dashboard");
+                break;
+            case "Doctor":
+                Navigation.NavigateTo("/doctor/dashboard");
+                break;
+            case "Admin":
+                Navigation.NavigateTo("/admin/dashboard");
+                break;
+            default:
+                Navigation.NavigateTo("/patient/dashboard");
+                break;
+        }
+    }
+
+    private async Task LogoutAsync()
+    {
+        var token = await AuthenticationStateProvider.GetTokenAsync();
+        await AuthService.LogoutAsync(token);
+        await JSRuntime.InvokeVoidAsync("localStorage.removeItem", "authToken");
+        await JSRuntime.InvokeVoidAsync("localStorage.removeItem", "authFirstName");
+        await JSRuntime.InvokeVoidAsync("localStorage.removeItem", "authUserId");
+        await JSRuntime.InvokeVoidAsync("localStorage.removeItem", "authRole");
+        AuthenticationStateProvider.MarkLoggedOut();
+        Navigation.NavigateTo("/login", replace: true);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var name = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authFirstName");
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            storedName = name;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}

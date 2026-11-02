@@ -1,0 +1,355 @@
+@page "/pharmacist/dashboard"
+@attribute [Authorize(Roles = "Pharmacist")]
+@page "/pharmacist"
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject QPharmacy.Services.IPharmacistService PharmacistService
+@inject QPharmacy.Shared.Service.ICurrentUserContext CurrentUser
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Header Context -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Pharmacy queue</h1>
+            <p class="text-sm text-slate-500 mt-1">@(string.IsNullOrWhiteSpace(CurrentUser.OrganizationOrBranch) ? "Pharmacy Branch" : CurrentUser.OrganizationOrBranch) &bull; @DateTime.Today.ToString("d MMMM yyyy")</p>
+        </div>
+        <div>
+            <button @onclick="OpenManualDispenseModal" class="bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 py-2.5 rounded-lg shadow-sm transition-colors flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Manual dispense</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Notifications / Toast Message -->
+    @if (!string.IsNullOrEmpty(toastMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between space-x-4 animate-fade-in max-w-md">
+            <div class="flex items-center space-x-3">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white shrink-0" />
+                <span class="text-sm font-medium">@toastMessage</span>
+            </div>
+            <button @onclick="() => toastMessage = null" class="text-white hover:text-emerald-100 transition-colors shrink-0">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="flex justify-center py-20">
+            <svg class="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    }
+    else
+    {
+        <!-- Operational KPI Row (Patient Grid Style & Sizing) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <!-- KPI 1: Awaiting verification -->
+        <div @onclick='() => Navigation.NavigateTo("/pharmacist/verification-queue")' class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-slate-300 transition-all cursor-pointer group">
+            <div>
+                <p class="text-sm font-medium text-slate-500">Awaiting verification</p>
+                <p class="text-2xl font-semibold text-slate-900 mt-1 group-hover:text-emerald-600 transition-colors">@kpis.AwaitingVerificationCount</p>
+            </div>
+            <div class="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
+                <Blazicon Svg="Lucide.FileText" class="w-5 h-5" />
+            </div>
+        </div>
+
+        <!-- KPI 2: Ready for collection -->
+        <div @onclick='() => Navigation.NavigateTo("/pharmacist/dispensing")' class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-slate-300 transition-all cursor-pointer group">
+            <div>
+                <p class="text-sm font-medium text-slate-500">Ready for collection</p>
+                <p class="text-2xl font-semibold text-slate-900 mt-1 group-hover:text-emerald-600 transition-colors">@kpis.ReadyForCollectionCount</p>
+            </div>
+            <div class="w-9 h-9 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
+                <Blazicon Svg="Lucide.Package" class="w-5 h-5" />
+            </div>
+        </div>
+
+        <!-- KPI 3: Low stock alerts -->
+        <div @onclick='() => Navigation.NavigateTo("/pharmacist/inventory")' class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-slate-300 transition-all cursor-pointer group">
+            <div>
+                <p class="text-sm font-medium text-slate-500">Low stock alerts</p>
+                <p class="text-2xl font-semibold text-slate-900 mt-1 group-hover:text-rose-600 transition-colors">@kpis.LowStockCount @if(kpis.LowStockCount > 0){<span class="text-xs font-medium text-rose-600 ml-1">Needs reorder</span>}</p>
+            </div>
+            <div class="w-9 h-9 rounded-full bg-rose-50 flex items-center justify-center text-rose-600">
+                <Blazicon Svg="Lucide.TrendingDown" class="w-5 h-5" />
+            </div>
+        </div>
+
+        <!-- KPI 4: Dispensed today -->
+        <div @onclick='() => Navigation.NavigateTo("/pharmacist/reports")' class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between hover:border-slate-300 transition-all cursor-pointer group">
+            <div>
+                <p class="text-sm font-medium text-slate-500">Dispensed today</p>
+                <p class="text-2xl font-semibold text-slate-900 mt-1 group-hover:text-emerald-600 transition-colors">@kpis.DispensedTodayCount</p>
+            </div>
+            <div class="w-9 h-9 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">
+                <Blazicon Svg="Lucide.Activity" class="w-5 h-5" />
+            </div>
+        </div>
+    </div>
+
+    <!-- Verification Queue Preview Section -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-5 border-b border-slate-200 flex justify-between items-center">
+            <h2 class="text-base font-semibold text-slate-900">Verification Queue</h2>
+            <button @onclick='() => Navigation.NavigateTo("/pharmacist/verification-queue")' class="text-xs font-semibold text-emerald-600 hover:text-emerald-700">View all (@queueItems.Count)</button>
+        </div>
+
+        @if (queueItems.Count == 0)
+        {
+            <div class="p-8 text-center text-slate-400 text-sm italic">
+                Verification queue is clear! All scripts reviewed.
+            </div>
+        }
+        else
+        {
+            <div class="divide-y divide-slate-100">
+                @foreach (var item in queueItems.Take(3))
+                {
+                    <div class="p-5 flex items-center justify-between hover:bg-slate-50 transition-colors gap-4">
+                        <div class="flex items-center space-x-4">
+                            <div class="w-10 h-10 rounded-full @(item.IsFlagged ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700") flex items-center justify-center shrink-0">
+                                <Blazicon Svg="item.IsFlagged ? Lucide.Activity : Lucide.FileText" class="w-5 h-5" />
+                            </div>
+                            <div>
+                                <p class="text-sm font-semibold text-slate-900">@item.MedicationShort &middot; @item.PatientName</p>
+                                <p class="text-xs text-slate-500 mt-0.5">From @item.DoctorName @if(item.IsFlagged){<span class="text-rose-600 font-semibold ml-1">(&bull; @item.InteractionStatus)</span>}</p>
+                            </div>
+                        </div>
+                        <div>
+                            <button @onclick="() => OpenReviewModal(item)" class="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-2xs">
+                                Review
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+    }
+</div>
+
+<!-- Review Prescription Modal -->
+@if (showReviewModal && selectedQueueItem != null)
+{
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-6 animate-in fade-in zoom-in-95 duration-200 space-y-5">
+            <div class="flex justify-between items-center pb-4 border-b border-slate-100">
+                <div>
+                    <h3 class="text-lg font-semibold text-slate-900">Review Prescription</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">Script #@(string.IsNullOrEmpty(selectedQueueItem.PrescriptionNumber) ? selectedQueueItem.Id.ToString()[..8] : selectedQueueItem.PrescriptionNumber)</p>
+                </div>
+                <button @onclick="CloseReviewModal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <!-- Patient & Doctor -->
+                <div class="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                    <div>
+                        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Patient</span>
+                        <span class="text-sm font-bold text-slate-900">@selectedQueueItem.PatientName</span>
+                    </div>
+                    <div>
+                        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Prescribing Doctor</span>
+                        <span class="text-sm font-bold text-slate-900">@selectedQueueItem.DoctorName</span>
+                    </div>
+                </div>
+
+                <!-- Medication & Dosage -->
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Medication &amp; Dosage</span>
+                    <p class="text-sm font-semibold text-slate-800">@selectedQueueItem.MedicationDetails</p>
+                </div>
+
+                <!-- Interaction Check Status -->
+                <div>
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Interaction Check</span>
+                    <div class="flex items-center justify-between p-3.5 rounded-xl @(selectedQueueItem.IsFlagged ? "bg-rose-50 border border-rose-200 text-rose-800" : "bg-emerald-50 border border-emerald-200 text-emerald-800")">
+                        <div class="flex items-center space-x-2">
+                            <Blazicon Svg="selectedQueueItem.IsFlagged ? Lucide.Activity : Lucide.Check" class="w-4 h-4" />
+                            <span class="text-xs font-semibold">@selectedQueueItem.InteractionStatus</span>
+                        </div>
+                        <span class="text-xs font-bold px-2.5 py-0.5 rounded-full @(selectedQueueItem.IsFlagged ? "bg-rose-200 text-rose-900" : "bg-emerald-200 text-emerald-900")">
+                            @(selectedQueueItem.IsFlagged ? "Action Needed" : "Clear")
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Document Preview -->
+                <div class="border border-slate-200 rounded-xl p-4 flex items-center space-x-3 bg-white">
+                    <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                        <Blazicon Svg="Lucide.FileText" class="w-5 h-5" />
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-slate-900 truncate">Prescription_@(selectedQueueItem.PrescriptionNumber).pdf</p>
+                        <p class="text-xs text-slate-400">Digitally signed by @selectedQueueItem.DoctorName</p>
+                    </div>
+                    <span class="inline-flex items-center px-2 py-1 bg-slate-100 text-slate-600 text-xs font-medium rounded">PDF</span>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+                <button type="button" @onclick="CloseReviewModal" class="px-4 py-2 text-slate-600 hover:text-slate-800 font-medium text-sm transition-colors">
+                    Close
+                </button>
+                <div class="flex items-center space-x-2">
+                    <button type="button" @onclick="ApproveSelectedScript" class="bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 py-2 rounded-lg transition-colors shadow-sm flex items-center space-x-1.5">
+                        <Blazicon Svg="Lucide.Check" class="w-4 h-4" />
+                        <span>Approve &amp; Dispense</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Manual Dispense Modal -->
+@if (showManualDispenseModal)
+{
+    <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center pb-2 border-b border-slate-100">
+                <h3 class="text-lg font-semibold text-slate-900">Manual Walk-in Dispense</h3>
+                <button @onclick="() => showManualDispenseModal = false" class="text-slate-400 hover:text-slate-600">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Patient Name</label>
+                    <input type="text" @bind="manualPatient" placeholder="e.g. Thandiwe Mokoena" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Prescribing Doctor</label>
+                    <input type="text" @bind="manualDoctor" placeholder="e.g. Dr. N. Adams" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Medication &amp; Dosage</label>
+                    <input type="text" @bind="manualMedication" placeholder="e.g. Paracetamol 500mg" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Quantity</label>
+                    <input type="number" @bind="manualQuantity" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
+                <button @onclick="() => showManualDispenseModal = false" class="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 font-medium text-sm hover:bg-slate-50 transition-colors">
+                    Cancel
+                </button>
+                <button @onclick="SubmitManualDispense" class="px-5 py-2 rounded-lg bg-slate-900 text-white font-medium text-sm hover:bg-slate-800 transition-colors shadow-sm">
+                    Complete Dispense
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private QPharmacy.Shared.Models.Database.PharmacistKpiModel kpis = new();
+    private List<QPharmacy.Shared.Models.Database.VerificationQueueModel> queueItems = new();
+    private string? toastMessage;
+    private bool isLoading = true;
+
+    private bool showManualDispenseModal = false;
+    private string manualPatient = "Thandiwe Mokoena";
+    private string manualDoctor = "Dr. N. Adams";
+    private string manualMedication = "Amoxicillin 500mg";
+    private int manualQuantity = 30;
+
+    // Review Modal State
+    private bool showReviewModal = false;
+    private QPharmacy.Shared.Models.Database.VerificationQueueModel? selectedQueueItem;
+
+    private void OpenReviewModal(QPharmacy.Shared.Models.Database.VerificationQueueModel item)
+    {
+        selectedQueueItem = item;
+        showReviewModal = true;
+    }
+
+    private void CloseReviewModal()
+    {
+        showReviewModal = false;
+        selectedQueueItem = null;
+    }
+
+    private async Task ApproveSelectedScript()
+    {
+        if (selectedQueueItem == null) return;
+
+        var scriptNum = selectedQueueItem.PrescriptionNumber;
+        var patName = selectedQueueItem.PatientName;
+
+        await PharmacistService.UpdateVerificationStatusAsync(selectedQueueItem.Id, "Approved");
+        queueItems.Remove(selectedQueueItem);
+
+        if (kpis.AwaitingVerificationCount > 0)
+        {
+            kpis.AwaitingVerificationCount--;
+        }
+        kpis.ReadyForCollectionCount++;
+
+        CloseReviewModal();
+        toastMessage = $"Prescription #{scriptNum} for {patName} approved and moved to dispensing queue.";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDashboardDataAsync();
+    }
+
+    private async Task LoadDashboardDataAsync()
+    {
+        isLoading = true;
+        try
+        {
+            kpis = await PharmacistService.GetPharmacistKpisAsync();
+            var queue = await PharmacistService.GetVerificationQueueAsync();
+            queueItems = queue.ToList();
+        }
+        catch (Exception ex)
+        {
+            toastMessage = $"Notice: {ex.Message}";
+            kpis = new QPharmacy.Shared.Models.Database.PharmacistKpiModel();
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OpenManualDispenseModal()
+    {
+        showManualDispenseModal = true;
+    }
+
+    private async Task SubmitManualDispense()
+    {
+        showManualDispenseModal = false;
+        var newOrder = new QPharmacy.Shared.Models.Database.DispensingOrderModel
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = $"QP-{new Random().Next(1050, 9999)}",
+            PatientName = manualPatient,
+            ItemCount = 1,
+            Fulfilment = "Click & collect",
+            HandoverRef = "Walk-in Counter Dispense",
+            ActionLabel = "Patient Notified",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await PharmacistService.AddDispensingOrderAsync(newOrder);
+        kpis.DispensedTodayCount++;
+        toastMessage = $"Manual dispense completed for {manualPatient} ({manualMedication}). Recorded in DB.";
+    }
+}

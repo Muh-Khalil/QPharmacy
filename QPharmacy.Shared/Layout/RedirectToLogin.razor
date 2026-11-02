@@ -1,0 +1,38 @@
+@namespace QPharmacy.Shared.Layout
+@inject NavigationManager Navigation
+
+<div class="min-h-screen flex items-center justify-center bg-slate-50">
+    <div class="text-center p-8 bg-white rounded-2xl shadow-sm border border-slate-200 max-w-md mx-auto">
+        <div class="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Blazicon Svg="Lucide.ShieldAlert" class="w-6 h-6" />
+        </div>
+        <h2 class="text-lg font-bold text-slate-800 mb-2">Access Restricted</h2>
+        <p class="text-sm text-slate-500 mb-6">You are not authorized to view this page or your session has expired.</p>
+        <button class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
+                @onclick="NavigateToLogin">
+            Return to Login
+        </button>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthenticationStateTask != null)
+        {
+            var authState = await AuthenticationStateTask;
+            if (authState.User.Identity == null || !authState.User.Identity.IsAuthenticated)
+            {
+                Navigation.NavigateTo("/login");
+            }
+        }
+    }
+
+    private void NavigateToLogin()
+    {
+        Navigation.NavigateTo("/login");
+    }
+}

@@ -1,0 +1,34 @@
+﻿@using System.ComponentModel.DataAnnotations
+@inherits InputBase<string>
+
+<input type="email"
+       class="@CssClass"
+       value="@CurrentValue"
+       @oninput="@OnInput"
+       @onchange="@OnChange" />
+
+@code {
+    private void OnInput(ChangeEventArgs e)
+    {
+        CurrentValue = e?.Value?.ToString() ?? string.Empty;
+    }
+
+    private void OnChange(ChangeEventArgs e)
+    {
+        CurrentValue = e?.Value?.ToString() ?? string.Empty;
+    }
+
+    protected override bool TryParseValueFromString(string? value, out string result, out string validationErrorMessage)
+    {
+        result = value ?? string.Empty;
+        validationErrorMessage = string.Empty;
+
+        if (!string.IsNullOrEmpty(result) && !new EmailAddressAttribute().IsValid(result))
+        {
+            validationErrorMessage = "Invalid email address format";
+            return false;
+        }
+
+        return true;
+    }
+}

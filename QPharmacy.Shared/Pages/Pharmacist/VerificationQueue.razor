@@ -1,0 +1,500 @@
+@page "/pharmacist/verification-queue"
+@attribute [Authorize(Roles = "Pharmacist")]
+@attribute [Authorize(Policy = AuthorizationPolicies.VerifyPrescription)]
+@page "/pharmacist/queue"
+@page "/pharmacist/verification"
+@implements IDisposable
+@inject NavigationManager Navigation
+@inject QPharmacy.Services.IPharmacistService PharmacistService
+@inject QPharmacy.Shared.Service.ICurrentUserContext CurrentUser
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Page Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Verification Queue</h1>
+            <p class="text-sm text-slate-500 mt-1">Review, clinically adjudicate, and approve incoming doctor prescriptions.</p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 shadow-2xs">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+                Live Auto-Sync
+            </span>
+            <button @onclick="ManualRefreshAsync" disabled="@isManualRefreshing" class="inline-flex items-center space-x-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg shadow-2xs transition-all cursor-pointer">
+                <Blazicon Svg="Lucide.RefreshCw" class="@(isManualRefreshing ? "w-3.5 h-3.5 animate-spin text-emerald-600" : "w-3.5 h-3.5 text-slate-500")" />
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    @if (!string.IsNullOrEmpty(toastMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between space-x-4 animate-fade-in max-w-md">
+            <div class="flex items-center space-x-3">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white shrink-0" />
+                <span class="text-sm font-medium">@toastMessage</span>
+            </div>
+            <button @onclick="() => toastMessage = null" class="text-white hover:text-emerald-100 transition-colors shrink-0">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="flex justify-center py-20">
+            <svg class="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    }
+    else if (activeItem != null)
+    {
+        <!-- Main Grid: Detail Panel & Up Next List -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            <!-- Left 2 Columns: Prescription Detail Panel -->
+            <div class="lg:col-span-2 bg-white rounded-2xl p-6 md:p-8 shadow-sm border border-slate-200 flex flex-col justify-between min-h-[460px] space-y-6">
+                <!-- Header -->
+                <div class="flex flex-wrap items-center justify-between gap-3 pb-5 border-b border-slate-100">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200/70 flex items-center justify-center text-emerald-700 shadow-2xs shrink-0">
+                            <Blazicon Svg="Lucide.FileText" class="w-5 h-5" />
+                        </div>
+                        <div>
+                            <div class="flex items-center space-x-2">
+                                <span class="font-mono text-sm font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md border border-slate-200 shadow-2xs tracking-tight">
+                                    #@(string.IsNullOrEmpty(activeItem.PrescriptionNumber) ? activeItem.Id.ToString()[..8].ToUpperInvariant() : activeItem.PrescriptionNumber)
+                                </span>
+                                <span class="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-600/20 whitespace-nowrap">
+                                    <Blazicon Svg="Lucide.Clock" class="w-3 h-3 mr-1 text-amber-600 shrink-0" />
+                                    Awaiting Verification
+                                </span>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">Branch: @(string.IsNullOrWhiteSpace(CurrentUser.OrganizationOrBranch) ? "Clicks, Claremont" : CurrentUser.OrganizationOrBranch)</p>
+                        </div>
+                    </div>
+                    @if (activeItem.IsFlagged)
+                    {
+                        <span class="bg-rose-50 text-rose-700 ring-1 ring-rose-600/20 px-3 py-1 rounded-full text-xs font-semibold flex items-center space-x-1.5 whitespace-nowrap">
+                            <Blazicon Svg="Lucide.Activity" class="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                            <span>Interaction Warning</span>
+                        </span>
+                    }
+                </div>
+
+                <!-- 2-Column Grid: Patient & Prescriber -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Patient -->
+                    <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200/70 flex items-start space-x-3">
+                        <div class="w-10 h-10 rounded-full bg-teal-600 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-2xs">
+                            @activeItem.Initials
+                        </div>
+                        <div class="overflow-hidden">
+                            <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Patient</div>
+                            <div class="text-sm font-bold text-slate-900 truncate">@activeItem.PatientName</div>
+                            <div class="text-xs text-slate-500 flex items-center space-x-1 mt-0.5">
+                                <Blazicon Svg="Lucide.Shield" class="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span class="truncate">Verified Patient · Medical Aid Active</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Prescriber -->
+                    <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200/70 flex items-start space-x-3">
+                        <div class="w-10 h-10 rounded-full bg-sky-100 text-sky-700 font-bold text-sm flex items-center justify-center shrink-0 shadow-2xs">
+                            <Blazicon Svg="Lucide.Check" class="w-5 h-5" />
+                        </div>
+                        <div class="overflow-hidden">
+                            <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Prescribed By</div>
+                            <div class="text-sm font-bold text-slate-900 truncate">@activeItem.DoctorName</div>
+                            <div class="text-xs text-slate-500 flex items-center space-x-1 mt-0.5">
+                                <Blazicon Svg="Lucide.Check" class="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                                <span class="truncate">Digital Signature Verified</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Medication Card -->
+                <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center space-x-1.5">
+                            <Blazicon Svg="Lucide.Package" class="w-4 h-4 text-emerald-600" />
+                            <span>Prescribed Medication</span>
+                        </span>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 whitespace-nowrap">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span>
+                            Branch Stock Available
+                        </span>
+                    </div>
+                    <div class="text-base font-bold text-slate-900">
+                        @activeItem.MedicationDetails
+                    </div>
+                    <p class="text-xs text-slate-500">
+                        Dispense as directed by physician. Branch inventory will be reserved upon approval.
+                    </p>
+                </div>
+
+                <!-- Interaction Check Box -->
+                <div class="p-4 rounded-xl @(activeItem.IsFlagged ? "bg-rose-50/80 border border-rose-200/80" : "bg-emerald-50/60 border border-emerald-200/70") flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-8 h-8 rounded-lg @(activeItem.IsFlagged ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700") flex items-center justify-center shrink-0">
+                            @if (activeItem.IsFlagged)
+                            {
+                                <Blazicon Svg="Lucide.Activity" class="w-4 h-4" />
+                            }
+                            else
+                            {
+                                <Blazicon Svg="Lucide.Shield" class="w-4 h-4" />
+                            }
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold @(activeItem.IsFlagged ? "text-rose-900" : "text-emerald-900")">
+                                @(activeItem.IsFlagged ? "Interaction Alert Detected" : "Safety Screening Passed")
+                            </div>
+                            <div class="text-xs @(activeItem.IsFlagged ? "text-rose-700" : "text-emerald-700") mt-0.5">
+                                @(string.IsNullOrWhiteSpace(activeItem.InteractionStatus) || activeItem.InteractionStatus == "Clear" ? "No contraindications detected with patient medical history or concurrent medications." : activeItem.InteractionStatus)
+                            </div>
+                        </div>
+                    </div>
+                    <span class="@(activeItem.IsFlagged ? "bg-rose-200 text-rose-900" : "bg-emerald-200 text-emerald-900") px-2.5 py-1 rounded-full text-xs font-bold shrink-0">
+                        @(activeItem.IsFlagged ? "Action Needed" : "Verified Safe")
+                    </span>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex flex-wrap items-center justify-between gap-3 pt-6 border-t border-slate-100">
+                    <div class="flex items-center space-x-3">
+                        <button @onclick="ApproveAndDispense" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm px-6 py-2.5 rounded-xl shadow-xs transition-all cursor-pointer flex items-center space-x-2">
+                            <Blazicon Svg="Lucide.Check" class="w-4 h-4" />
+                            <span>Approve &amp; Dispense</span>
+                        </button>
+                        <button @onclick="OpenQueryModal" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center space-x-2 shadow-2xs cursor-pointer">
+                            <Blazicon Svg="Lucide.MessageSquare" class="w-4 h-4 text-slate-500" />
+                            <span>Query with Doctor</span>
+                        </button>
+                    </div>
+                    <span class="text-xs text-slate-400 font-medium hidden sm:inline">
+                        Reserves stock &amp; routes to patient checkout
+                    </span>
+                </div>
+            </div>
+
+            <!-- Right Column: Up Next List -->
+            <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-base font-semibold text-slate-900">Up next in queue</h2>
+                    <span class="text-xs font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                        @upNextList.Count waiting
+                    </span>
+                </div>
+
+                @if (upNextList.Count == 0)
+                {
+                    <div class="p-8 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
+                        <div class="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                            <Blazicon Svg="Lucide.Check" class="w-5 h-5" />
+                        </div>
+                        <p class="text-sm font-semibold text-slate-700">Queue is Clear</p>
+                        <p class="text-xs text-slate-400 max-w-[200px] mx-auto">No additional prescriptions waiting for verification at this branch.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="space-y-3">
+                        @foreach (var item in upNextList)
+                        {
+                            <div @onclick="() => SelectQueueItem(item)" class="flex items-center space-x-3.5 p-3 rounded-xl hover:bg-slate-50 cursor-pointer transition-colors group border border-transparent hover:border-slate-100">
+                                <div class="w-9 h-9 rounded-full @item.AvatarBgColor text-white font-semibold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                                    @item.Initials
+                                </div>
+                                <div class="overflow-hidden">
+                                    <p class="font-semibold text-slate-900 text-sm group-hover:text-emerald-600 transition-colors truncate">@item.PatientName</p>
+                                    <p class="text-xs text-slate-500 truncate">@item.MedicationShort</p>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="bg-white rounded-2xl p-12 text-center border border-slate-200 shadow-sm space-y-4">
+            <div class="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-2xs">
+                <Blazicon Svg="Lucide.Check" class="w-8 h-8" />
+            </div>
+            <h3 class="text-xl font-bold text-slate-900">Verification Queue Clear</h3>
+            <p class="text-slate-500 text-sm max-w-md mx-auto">All incoming prescriptions for @(string.IsNullOrWhiteSpace(CurrentUser.OrganizationOrBranch) ? "your branch" : CurrentUser.OrganizationOrBranch) have been reviewed and processed.</p>
+            <button @onclick='() => Navigation.NavigateTo("/pharmacist/dashboard")' class="bg-slate-900 text-white text-sm font-semibold px-6 py-2.5 rounded-xl hover:bg-slate-800 transition-colors inline-block mt-2 shadow-xs cursor-pointer">
+                Return to Dashboard
+            </button>
+        </div>
+    }
+</div>
+
+<!-- Query Doctor Modal -->
+@if (showQueryModal && activeItem != null)
+{
+    <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center pb-2 border-b border-slate-100">
+                <h3 class="text-xl font-bold text-slate-900">Query Prescription with Doctor</h3>
+                <button @onclick="() => showQueryModal = false" class="text-slate-400 hover:text-slate-600 cursor-pointer">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="space-y-4 text-sm text-slate-600">
+                <p>Sending script query note for <strong>Script #@activeItem.PrescriptionNumber</strong> to <strong>@activeItem.DoctorName</strong>.</p>
+                <div>
+                    <label class="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Query Note / Clinical Reason</label>
+                    <textarea @bind="queryNote" rows="4" placeholder="e.g. Flagged interaction detected between Ibuprofen and Amlodipine. Requesting alternative analgesic." class="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"></textarea>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                <button @onclick="() => showQueryModal = false" class="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-semibold text-sm hover:bg-slate-50 transition-colors cursor-pointer">
+                    Cancel
+                </button>
+                <button @onclick="SubmitQueryToDoctor" class="px-6 py-2.5 rounded-xl bg-slate-900 text-white font-semibold text-sm hover:bg-slate-800 transition-colors shadow-sm cursor-pointer">
+                    Send Query &amp; Hold Script
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? Id { get; set; }
+
+    private QPharmacy.Shared.Models.Database.VerificationQueueModel? activeItem;
+    private List<QPharmacy.Shared.Models.Database.VerificationQueueModel> upNextList = new();
+    private string? toastMessage;
+    private bool isLoading = true;
+
+    private bool showQueryModal = false;
+    private string queryNote = "";
+    private System.Threading.CancellationTokenSource? _cts;
+    private bool isManualRefreshing = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadQueueFromDbAsync();
+        StartBackgroundPolling();
+    }
+
+    private void StartBackgroundPolling()
+    {
+        _cts?.Cancel();
+        _cts = new System.Threading.CancellationTokenSource();
+        var token = _cts.Token;
+        _ = Task.Run(async () =>
+        {
+            using var periodicTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            try
+            {
+                while (await periodicTimer.WaitForNextTickAsync(token))
+                {
+                    await RefreshQueueSilentAsync();
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[VerificationQueue Poller] {ex.Message}");
+            }
+        }, token);
+    }
+
+    private async Task ManualRefreshAsync()
+    {
+        isManualRefreshing = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await RefreshQueueSilentAsync();
+        }
+        finally
+        {
+            isManualRefreshing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RefreshQueueSilentAsync()
+    {
+        try
+        {
+            var queue = await PharmacistService.GetVerificationQueueAsync();
+            var list = queue.ToList();
+            bool changed = false;
+
+            if (activeItem == null && list.Count > 0)
+            {
+                activeItem = list[0];
+                upNextList = list.Skip(1).ToList();
+                changed = true;
+            }
+            else if (activeItem != null)
+            {
+                var match = list.FirstOrDefault(x => x.Id == activeItem.Id);
+                if (match == null)
+                {
+                    if (list.Count > 0)
+                    {
+                        activeItem = list[0];
+                        upNextList = list.Skip(1).ToList();
+                    }
+                    else
+                    {
+                        activeItem = null;
+                        upNextList = [];
+                    }
+                    changed = true;
+                }
+                else
+                {
+                    var newUpNext = list.Where(x => x.Id != activeItem.Id).ToList();
+                    if (newUpNext.Count != upNextList.Count || !newUpNext.Select(x => x.Id).SequenceEqual(upNextList.Select(x => x.Id)))
+                    {
+                        upNextList = newUpNext;
+                        changed = true;
+                    }
+                }
+            }
+            else if (activeItem == null && list.Count == 0 && upNextList.Count > 0)
+            {
+                upNextList = [];
+                changed = true;
+            }
+
+            if (changed)
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrEmpty(Id) && upNextList.Count > 0)
+        {
+            var match = upNextList.FirstOrDefault(x => x.PrescriptionNumber == Id || x.Id.ToString().StartsWith(Id));
+            if (match != null)
+            {
+                SelectQueueItem(match);
+            }
+        }
+    }
+
+    private async Task LoadQueueFromDbAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var queue = await PharmacistService.GetVerificationQueueAsync();
+            var list = queue.ToList();
+            if (list.Count > 0)
+            {
+                activeItem = list[0];
+                upNextList = list.Skip(1).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            activeItem = null;
+            upNextList = [];
+            toastMessage = $"Unable to load the database queue: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void SelectQueueItem(QPharmacy.Shared.Models.Database.VerificationQueueModel item)
+    {
+        if (activeItem != null)
+        {
+            upNextList.Add(activeItem);
+        }
+        activeItem = item;
+        upNextList.Remove(item);
+    }
+
+    private async Task ApproveAndDispense()
+    {
+        if (activeItem == null) return;
+
+        try
+        {
+            await PharmacistService.UpdateVerificationStatusAsync(activeItem.Id, "Approved");
+            toastMessage = $"Prescription #{activeItem.PrescriptionNumber} ({activeItem.PatientName}) approved in DB and moved to dispensing!";
+            AdvanceQueue();
+        }
+        catch (Exception ex)
+        {
+            toastMessage = $"Unable to approve prescription: {ex.Message}";
+        }
+        finally
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OpenQueryModal()
+    {
+        if (activeItem != null)
+        {
+            queryNote = activeItem.IsFlagged ? "Flagged interaction detected between Ibuprofen and Amlodipine. Requesting alternative analgesic or dosage adjustment." : "";
+            showQueryModal = true;
+        }
+    }
+
+    private async Task SubmitQueryToDoctor()
+    {
+        if (activeItem == null) return;
+
+        showQueryModal = false;
+        try
+        {
+            await PharmacistService.UpdateVerificationStatusAsync(activeItem.Id, "Queried", queryNote);
+            toastMessage = $"Query note sent to {activeItem.DoctorName} for Script #{activeItem.PrescriptionNumber}. Updated status in DB.";
+            AdvanceQueue();
+        }
+        catch (Exception ex)
+        {
+            toastMessage = $"Unable to query doctor: {ex.Message}";
+        }
+        finally
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void AdvanceQueue()
+    {
+        if (upNextList.Count > 0)
+        {
+            activeItem = upNextList[0];
+            upNextList.RemoveAt(0);
+        }
+        else
+        {
+            activeItem = null;
+        }
+    }
+}

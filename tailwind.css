@@ -1,0 +1,45 @@
+@import "tailwindcss";
+@source "./QPharmacy.Shared/**/*.razor";
+@source "./QPharmacy.Web/**/*.razor";
+@source inline("hidden md:hidden lg:hidden flex md:flex lg:flex block md:block lg:block md:w-1/4 sm:px-6 sm:block sm:inline sm:space-x-3 sm:text-sm sm:text-xl sm:w-10 sm:h-10 sm:px-5 bg-rose-600 ring-2 ring-rose-500/40 shadow-lg bg-teal-600 ring-teal-400/40 animate-bounce animate-ping animate-pulse -top-2 -right-2 top-5 right-5");
+
+@theme {
+  --color-brand-dark: #0B2B42;
+  --color-brand-DEFAULT: #114166;
+  --color-brand-light: #A0C6E2;
+  --color-accent-DEFAULT: #F6A350;
+  --font-sans: "Inter", system-ui, sans-serif;
+}
+
+@layer components {
+    .auth-input {
+        @apply w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-DEFAULT focus:border-transparent transition-all;
+    }
+    
+    .role-tab {
+        @apply flex-1 py-2 px-4 rounded-full text-sm font-semibold text-slate-500 transition-colors bg-transparent border-0;
+    }
+    
+    .role-tab.active {
+        @apply bg-white text-slate-800 shadow-sm;
+    }
+
+    .custom-scrollbar {
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: #cbd5e1 transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 5px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background-color: #cbd5e1;
+        border-radius: 9999px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background-color: #94a3b8;
+    }
+}
