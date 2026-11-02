@@ -1,0 +1,46 @@
+@page "/dummy"
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@inject IPatientService PatientService
+
+<PageTitle>Dummy Page - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12 pt-8">
+    <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Dummy Page</h1>
+    <p class="text-sm text-slate-500 mt-1">This is a test page to learn the Blazor workflow.</p>
+
+    <div class="mt-8 space-y-4">
+        @if (dummies == null)
+        {
+            <p class="text-slate-500">Loading data...</p>
+        }
+        else if (!dummies.Any())
+        {
+            <p class="text-slate-500">No dummy data found.</p>
+        }
+        else
+        {
+            @foreach (var dummy in dummies)
+            {
+                <div class="bg-white shadow-sm rounded-xl border border-slate-200 p-6">
+                    <h3 class="text-lg font-medium text-slate-900">@dummy.Id. @dummy.Title</h3>
+                    <p class="text-slate-500 mt-2">@dummy.Description</p>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    // This variable will hold our data
+    private List<DummyModel>? dummies;
+
+    // This method runs automatically when the page loads
+    protected override async Task OnInitializedAsync()
+    {
+        // We call the Service, which calls the Repository
+        var result = await PatientService.GetDummiesAsync();
+        dummies = result.ToList();
+    }
+}

@@ -1,0 +1,448 @@
+@page "/admin/users"
+@attribute [Authorize(Roles = "Admin")]
+@attribute [Authorize(Policy = AuthorizationPolicies.ManageUsers)]
+@page "/admin/users-roles"
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@inject NavigationManager Navigation
+@inject IAdminService AdminService
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Header Context -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Users &amp; Roles</h1>
+            <p class="text-sm text-slate-500 mt-1">Manage accounts and permissions across the platform.</p>
+        </div>
+        <div>
+            <button @onclick="OpenInviteModal" class="bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 py-2.5 rounded-lg shadow-sm transition-colors flex items-center space-x-2 cursor-pointer">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Invite user</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Top-Right Floating Notification Toast Container -->
+    <div class="fixed top-5 right-5 z-[100] max-w-sm sm:max-w-md w-full flex flex-col gap-3 pointer-events-none">
+        @if (!string.IsNullOrEmpty(toastMessage))
+        {
+            <div class="pointer-events-auto p-4 rounded-xl flex items-center justify-between bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-xl animate-fade-in transition-all">
+                <div class="flex items-center space-x-3">
+                    <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span class="font-medium text-sm">@toastMessage</span>
+                </div>
+                <button @onclick="() => toastMessage = null" class="text-emerald-500 hover:text-emerald-700 transition-colors cursor-pointer shrink-0 ml-3">
+                    <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+                </button>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="pointer-events-auto p-4 rounded-xl flex items-center justify-between bg-rose-50 text-rose-900 border border-rose-200 shadow-xl animate-fade-in transition-all">
+                <div class="flex items-center space-x-3">
+                    <Blazicon Svg="Lucide.Shield" class="w-5 h-5 text-rose-600 shrink-0" />
+                    <span class="font-medium text-sm">@errorMessage</span>
+                </div>
+                <button @onclick="() => errorMessage = null" class="text-rose-500 hover:text-rose-700 transition-colors cursor-pointer shrink-0 ml-3">
+                    <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+                </button>
+            </div>
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="flex justify-center py-20">
+            <svg class="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    }
+    else
+    {
+        <!-- User & Role Table Card -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+                <thead class="bg-white text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                    <tr>
+                        <th class="px-6 py-4">USER</th>
+                        <th class="px-6 py-4">ROLE</th>
+                        <th class="px-6 py-4">LAST ACTIVE</th>
+                        <th class="px-6 py-4">STATUS</th>
+                        <th class="px-6 py-4 text-right">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @if (userList == null || !userList.Any())
+                    {
+                        <tr>
+                            <td colspan="5" class="px-6 py-8 text-center text-slate-400">
+                                No registered users found.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var user in userList)
+                        {
+                            <tr class="hover:bg-slate-50 transition-colors">
+                                <td class="px-6 py-4">
+                                    <p class="font-semibold text-slate-900">@user.Name</p>
+                                    <p class="text-xs text-slate-400 mt-0.5">@user.Email</p>
+                                </td>
+                                <td class="px-6 py-4">
+                                    @if (user.Role == "Patient")
+                                    {
+                                        <span class="bg-sky-50 text-sky-800 border border-sky-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                            <Blazicon Svg="Lucide.User" class="w-3 h-3 text-sky-600 shrink-0" />
+                                            <span>Patient</span>
+                                        </span>
+                                    }
+                                    else if (user.Role == "Doctor")
+                                    {
+                                        <span class="bg-emerald-50 text-emerald-800 border border-emerald-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                            <Blazicon Svg="Lucide.Stethoscope" class="w-3 h-3 text-emerald-600 shrink-0" />
+                                            <span>Doctor</span>
+                                        </span>
+                                    }
+                                    else if (user.Role == "Pharmacist")
+                                    {
+                                        <span class="bg-amber-50 text-amber-800 border border-amber-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                            <Blazicon Svg="Lucide.Store" class="w-3 h-3 text-amber-600 shrink-0" />
+                                            <span>Pharmacist</span>
+                                        </span>
+                                    }
+                                    else if (user.Role == "Driver")
+                                    {
+                                        <span class="bg-purple-50 text-purple-800 border border-purple-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                            <Blazicon Svg="Lucide.Truck" class="w-3 h-3 text-purple-600 shrink-0" />
+                                            <span>Driver</span>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="bg-indigo-50 text-indigo-800 border border-indigo-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                            <Blazicon Svg="Lucide.ShieldCheck" class="w-3 h-3 text-indigo-600 shrink-0" />
+                                            <span>@user.Role</span>
+                                        </span>
+                                    }
+                                </td>
+                                <td class="px-6 py-4 text-slate-700 font-medium">@user.LastActive</td>
+                                <td class="px-6 py-4">
+                                    @if (user.Status == "Active")
+                                    {
+                                        <span class="bg-emerald-50 text-emerald-800 border border-emerald-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                            <Blazicon Svg="Lucide.Check" class="w-3 h-3 text-emerald-600 shrink-0" />
+                                            <span>Active</span>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="bg-rose-50 text-rose-800 border border-rose-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                            <Blazicon Svg="Lucide.X" class="w-3 h-3 text-rose-600 shrink-0" />
+                                            <span>Deactivated</span>
+                                        </span>
+                                    }
+                                </td>
+                                <td class="px-6 py-4 text-right">
+                                    <button @onclick="() => OpenManageModal(user)" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs px-3 py-1.5 rounded-lg transition-colors shadow-2xs cursor-pointer flex items-center space-x-1 ml-auto">
+                                        <Blazicon Svg="Lucide.UserCheck" class="w-3.5 h-3.5 text-slate-500" />
+                                        <span>Manage</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- RBAC Architecture Footnote -->
+    <div class="mt-6 p-4 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-500 space-y-1">
+        <p class="font-semibold text-slate-700 flex items-center space-x-1">
+            <Blazicon Svg="Lucide.Lock" class="w-3.5 h-3.5 text-slate-400" />
+            <span>Role-Based Access Control (RBAC) System Architecture:</span>
+        </p>
+        <p>Role badges reflect permission scopes. Changing a user's role immediately grants or restricts access across the Patient, Doctor, Pharmacist, and Super Admin portals.</p>
+    </div>
+    }
+</div>
+
+<!-- Manage User Modal -->
+@if (showManageModal && activeUser != null)
+{
+    <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center pb-2 border-b border-slate-100">
+                <div>
+                    <h3 class="text-lg font-semibold text-slate-900">Manage User Role &amp; Permissions</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">@activeUser.Name (@activeUser.Email)</p>
+                </div>
+                <button @onclick="() => showManageModal = false" class="text-slate-400 hover:text-slate-600 cursor-pointer">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div class="bg-slate-50 p-4 rounded-xl space-y-1 border border-slate-100">
+                    <p class="text-sm font-semibold text-slate-900">@activeUser.Name</p>
+                    <p class="text-xs text-slate-500">@activeUser.Email &bull; ID: @activeUser.Id</p>
+                </div>
+
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Assign Platform Role</label>
+                    <select @bind="editRole" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white">
+                        <option value="Super Admin">Super Admin</option>
+                        <option value="Pharmacist">Pharmacist</option>
+                        <option value="Doctor">Doctor</option>
+                        <option value="Driver">Driver</option>
+                        <option value="Patient">Patient</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Account Status</label>
+                    <select @bind="editStatus" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white">
+                        <option value="Active">Active</option>
+                        <option value="Deactivated">Deactivated</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
+                <button @onclick="() => showManageModal = false" class="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 font-medium text-sm hover:bg-slate-50 transition-colors cursor-pointer">
+                    Cancel
+                </button>
+                <button @onclick="SaveUserChanges" class="px-5 py-2 rounded-lg bg-slate-900 text-white font-medium text-sm hover:bg-slate-800 transition-colors shadow-sm cursor-pointer">
+                    Save Permission Changes
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Invite User Modal -->
+@if (showInviteModal)
+{
+    <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center pb-2 border-b border-slate-100">
+                <h3 class="text-lg font-semibold text-slate-900">Invite New User</h3>
+                <button @onclick="() => showInviteModal = false" class="text-slate-400 hover:text-slate-600 cursor-pointer">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(modalErrorMessage))
+            {
+                <div class="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium flex items-center space-x-2">
+                    <Blazicon Svg="Lucide.Shield" class="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>@modalErrorMessage</span>
+                </div>
+            }
+
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Full Name</label>
+                    <input type="text" @bind="inviteName" placeholder="e.g. Sipho Dlamini" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Email Address</label>
+                    <input type="email" @bind="inviteEmail" placeholder="e.g. s.dlamini@clicks.co.za" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Assign Role</label>
+                    <select @bind="inviteRole" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white">
+                        <option value="Pharmacist">Pharmacist</option>
+                        <option value="Super Admin">Super Admin</option>
+                        <option value="Doctor">Doctor</option>
+                        <option value="Driver">Driver</option>
+                        <option value="Patient">Patient</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
+                <button @onclick="() => showInviteModal = false" class="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 font-medium text-sm hover:bg-slate-50 transition-colors cursor-pointer">
+                    Cancel
+                </button>
+                <button @onclick="SubmitInvite" class="px-5 py-2 rounded-lg bg-slate-900 text-white font-medium text-sm hover:bg-slate-800 transition-colors shadow-sm cursor-pointer flex items-center space-x-2">
+                    <Blazicon Svg="Lucide.Mail" class="w-4 h-4" />
+                    <span>Send Invitation</span>
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string? toastMessage;
+    private string? errorMessage;
+    private string? modalErrorMessage;
+    private bool showManageModal = false;
+    private bool showInviteModal = false;
+    private bool isLoading = true;
+    private AdminUserModel? activeUser;
+
+    private string editRole = "";
+    private string editStatus = "";
+
+    private string inviteName = "";
+    private string inviteEmail = "";
+    private string inviteRole = "Pharmacist";
+
+    private List<AdminUserModel> userList = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUsersAsync(showLoading: true);
+    }
+
+    private async Task LoadUsersAsync(bool showLoading = false)
+    {
+        if (showLoading)
+        {
+            isLoading = true;
+        }
+
+        try
+        {
+            userList = (await AdminService.GetUsersListAsync()).ToList();
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OpenManageModal(AdminUserModel user)
+    {
+        activeUser = user;
+        editRole = user.Role;
+        editStatus = user.Status;
+        showManageModal = true;
+    }
+
+    private async Task SaveUserChanges()
+    {
+        if (activeUser == null) return;
+
+        var name = activeUser.Name;
+        var r = editRole;
+        var s = editStatus;
+        var id = activeUser.Id;
+
+        // Close modal immediately and show notification
+        showManageModal = false;
+        errorMessage = null;
+        toastMessage = $"Updated user permissions for {name} ({r} - {s}). Database & RBAC synced.";
+        StateHasChanged();
+
+        try
+        {
+            await AdminService.UpdateUserRoleAndStatusAsync(id, name, r, s);
+            await LoadUsersAsync(showLoading: false);
+        }
+        catch
+        {
+            await LoadUsersAsync(showLoading: false);
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(5000);
+            toastMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void OpenInviteModal()
+    {
+        inviteName = "";
+        inviteEmail = "";
+        inviteRole = "Pharmacist";
+        modalErrorMessage = null;
+        errorMessage = null;
+        showInviteModal = true;
+    }
+
+    private async Task SubmitInvite()
+    {
+        modalErrorMessage = null;
+        var name = inviteName.Trim();
+        var email = inviteEmail.Trim();
+        var role = inviteRole;
+
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(email))
+        {
+            modalErrorMessage = "Please enter both full name and email address.";
+            return;
+        }
+
+        // Check if user already exists in current list
+        if (userList.Any(u => u.Email.Equals(email, StringComparison.OrdinalIgnoreCase)))
+        {
+            modalErrorMessage = $"A user with email '{email}' already exists on the platform.";
+            showInviteModal = false;
+            toastMessage = null;
+            errorMessage = $"Cannot invite user: '{email}' already exists on the platform.";
+            StateHasChanged();
+
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(5000);
+                errorMessage = null;
+                await InvokeAsync(StateHasChanged);
+            });
+            return;
+        }
+
+        // Add new user to local list immediately so it reflects in the table right away
+        var newAdminUser = new AdminUserModel
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = name,
+            Email = email,
+            Role = role,
+            LastActive = "Pending Invite",
+            Status = "Active",
+            CreatedAt = DateTime.UtcNow
+        };
+        userList.Insert(0, newAdminUser);
+
+        // Close modal immediately and display success toast notification
+        showInviteModal = false;
+        errorMessage = null;
+        toastMessage = $"Invitation email sent to {email} for role '{role}'. Account created & added to table.";
+        StateHasChanged();
+
+        try
+        {
+            var success = await AdminService.InviteUserAsync(name, email, role);
+            if (!success)
+            {
+                userList.Remove(newAdminUser);
+                toastMessage = null;
+                errorMessage = $"Could not invite user: '{email}' already exists in the database.";
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // Keep local entry if network/backend is transient
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(5000);
+            toastMessage = null;
+            errorMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+}

@@ -1,0 +1,189 @@
+@page "/doctor/dashboard"
+@attribute [Authorize(Roles = "Doctor")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@inject IDoctorService DoctorService
+@inject NavigationManager Navigation
+
+<PageTitle>Doctor Dashboard - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Header & Greeting -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Good morning, Dr. Adams</h1>
+            <p class="text-sm text-slate-500 mt-1">You have @kpi.TodaysAppointments consultations scheduled today.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <button @onclick="NavigateToNewNote" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>New consultation</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Operational KPI Row (Patient & Pharmacist Grid Style & Sizing) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <!-- Today's Appointments -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between min-h-[96px]">
+            <div>
+                <p class="text-sm font-medium text-slate-500">Today's appointments</p>
+                <p class="text-2xl font-semibold text-slate-900 mt-1">@kpi.TodaysAppointments</p>
+            </div>
+            <div class="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
+                <Blazicon Svg="Lucide.Calendar" class="w-5 h-5" />
+            </div>
+        </div>
+
+        <!-- Pending Referrals -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between min-h-[96px]">
+            <div>
+                <p class="text-sm font-medium text-slate-500">Pending referrals</p>
+                <p class="text-2xl font-semibold text-slate-900 mt-1">@kpi.PendingReferrals</p>
+            </div>
+            <div class="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center text-amber-600">
+                <Blazicon Svg="Lucide.UserCheck" class="w-5 h-5" />
+            </div>
+        </div>
+
+        <!-- Prescriptions Issued (Week) -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between min-h-[96px]">
+            <div>
+                <p class="text-sm font-medium text-slate-500">Prescriptions issued (week)</p>
+                <p class="text-2xl font-semibold text-slate-900 mt-1">@kpi.PrescriptionsIssuedWeek</p>
+            </div>
+            <div class="w-9 h-9 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
+                <Blazicon Svg="Lucide.FileText" class="w-5 h-5" />
+            </div>
+        </div>
+
+        <!-- Avg. Consultation -->
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between min-h-[96px]">
+            <div>
+                <p class="text-sm font-medium text-slate-500">Avg. consultation</p>
+                <p class="text-2xl font-semibold text-slate-900 mt-1">@kpi.AvgConsultationLengthMinutes <span class="text-sm text-slate-400 font-normal">min</span></p>
+            </div>
+            <div class="w-9 h-9 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">
+                <Blazicon Svg="Lucide.Clock" class="w-5 h-5" />
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Cards Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        <!-- Today's Schedule Card (Left 2 cols) -->
+        <div class="lg:col-span-2 bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden p-6">
+            <h2 class="text-base font-semibold text-slate-900 mb-4">Today's schedule</h2>
+            
+            <div class="divide-y divide-slate-100">
+                @if (scheduleItems == null || !scheduleItems.Any())
+                {
+                    <div class="py-6 text-center text-slate-400 text-sm">No appointments scheduled for today.</div>
+                }
+                else
+                {
+                    @foreach (var item in scheduleItems)
+                    {
+                        <div class="py-4 first:pt-0 last:pb-0 flex items-center justify-between hover:bg-slate-50/50 rounded-lg transition-colors px-2">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-10 h-10 rounded-full @item.AvatarBgColor flex items-center justify-center text-white font-bold text-sm">
+                                    @item.Initials
+                                </div>
+                                <div>
+                                    <div class="font-semibold text-slate-900 text-sm">@item.PatientName</div>
+                                    <div class="text-xs text-slate-500 mt-0.5">
+                                        @item.Time &middot; @item.AppointmentType &middot; @item.Mode
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <button @onclick="() => StartConsultation(item.PatientId)" class="border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium px-3.5 py-1.5 rounded-lg text-xs transition-colors shadow-sm">
+                                    Start
+                                </button>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        <!-- Pending Actions Card (Right 1 col) -->
+        <div class="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+            <h2 class="text-base font-semibold text-slate-900 mb-4">Pending actions</h2>
+
+            <div class="space-y-4">
+                @if (pendingActions == null || !pendingActions.Any())
+                {
+                    <div class="text-center text-slate-400 text-sm py-4">No pending actions.</div>
+                }
+                else
+                {
+                    @foreach (var action in pendingActions)
+                    {
+                        <div class="flex items-start space-x-3 p-3 rounded-lg border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer" @onclick="() => HandlePendingAction(action)">
+                            <div class="p-2 rounded-lg bg-amber-50 text-amber-600 mt-0.5">
+                                @if (action.IconType == "Warning")
+                                {
+                                    <Blazicon Svg="Lucide.Activity" class="w-5 h-5" />
+                                }
+                                else
+                                {
+                                    <Blazicon Svg="Lucide.FileText" class="w-5 h-5" />
+                                }
+                            </div>
+                            <div>
+                                <div class="font-semibold text-slate-900 text-sm">@action.Title</div>
+                                <div class="text-xs text-slate-500 mt-0.5">@action.Subtitle</div>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private DoctorKpiModel kpi = new();
+    private List<DoctorScheduleItemModel> scheduleItems = new();
+    private List<DoctorPendingActionModel> pendingActions = new();
+    private Guid currentDoctorId = Guid.NewGuid();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDashboardDataAsync();
+    }
+
+    private async Task LoadDashboardDataAsync()
+    {
+        kpi = await DoctorService.GetDoctorKpisAsync(currentDoctorId);
+        var schedule = await DoctorService.GetTodaysScheduleAsync(currentDoctorId);
+        scheduleItems = schedule.ToList();
+        var actions = await DoctorService.GetPendingActionsAsync(currentDoctorId);
+        pendingActions = actions.ToList();
+    }
+
+    private void StartConsultation(Guid patientId)
+    {
+        Navigation.NavigateTo($"/doctor/consultations?patientId={patientId}");
+    }
+
+    private void NavigateToNewNote()
+    {
+        Navigation.NavigateTo("/doctor/consultations");
+    }
+
+    private void HandlePendingAction(DoctorPendingActionModel action)
+    {
+        if (action.ActionType == "Interaction")
+        {
+            Navigation.NavigateTo("/doctor/prescriptions");
+        }
+        else
+        {
+            Navigation.NavigateTo("/doctor/consultations");
+        }
+    }
+}

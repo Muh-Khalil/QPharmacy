@@ -1,0 +1,218 @@
+@page "/doctor/calendar"
+@attribute [Authorize(Roles = "Doctor")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@inject IDoctorService DoctorService
+@inject NavigationManager Navigation
+
+<PageTitle>Calendar - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Success Alert / Toast -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between space-x-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div class="flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="DismissNotification" class="text-white hover:text-emerald-100 transition-colors">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Calendar</h1>
+            <p class="text-sm text-slate-500 mt-1">Manage your availability and appointments.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <button @onclick="ToggleBlockModal" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Block time off</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Week View Table Card -->
+    <div class="bg-white border border-slate-200 shadow-sm rounded-xl p-6 overflow-hidden">
+        <h2 class="text-base font-semibold text-slate-900 mb-4">This week</h2>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-slate-100 bg-slate-50/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                        <th class="py-4 px-6">Day</th>
+                        <th class="py-4 px-6">Morning</th>
+                        <th class="py-4 px-6">Afternoon</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 text-sm">
+                    @if (slots == null || !slots.Any())
+                    {
+                        <tr>
+                            <td colspan="3" class="py-6 text-center text-slate-400">
+                                No calendar slots found.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var slot in slots)
+                        {
+                            <tr class="hover:bg-slate-50/50 transition-colors">
+                                <td class="py-4 px-6 font-semibold text-slate-900">
+                                    @slot.DayLabel
+                                </td>
+                                <td class="py-4 px-6">
+                                    @if (slot.MorningStatus == "Open")
+                                    {
+                                        <span class="inline-flex items-center text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full text-xs font-medium ring-1 ring-inset ring-emerald-600/20">
+                                            Open
+                                        </span>
+                                    }
+                                    else if (slot.IsMorningBlocked || slot.MorningStatus == "Blocked")
+                                    {
+                                        <span class="inline-flex items-center text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full text-xs font-medium ring-1 ring-inset ring-amber-600/20">
+                                            Blocked
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="font-medium text-slate-700">
+                                            @slot.MorningStatus
+                                        </span>
+                                    }
+                                </td>
+                                <td class="py-4 px-6">
+                                    @if (slot.AfternoonStatus == "Open")
+                                    {
+                                        <span class="inline-flex items-center text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full text-xs font-medium ring-1 ring-inset ring-emerald-600/20">
+                                            Open
+                                        </span>
+                                    }
+                                    else if (slot.IsAfternoonBlocked || slot.AfternoonStatus == "Blocked")
+                                    {
+                                        <span class="inline-flex items-center text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full text-xs font-medium ring-1 ring-inset ring-amber-600/20">
+                                            Blocked
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="font-medium text-slate-700">
+                                            @slot.AfternoonStatus
+                                        </span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Block Time Off Modal -->
+@if (showBlockModal)
+{
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-md w-full mx-4 p-6 animate-in fade-in zoom-in-95 duration-200">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-lg font-bold text-slate-900">Block Time Off</h3>
+                <button @onclick="ToggleBlockModal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Select Day</label>
+                    <select @bind="selectedDay" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500">
+                        @foreach (var s in slots)
+                        {
+                            <option value="@s.DayLabel">@s.DayLabel</option>
+                        }
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Time Period</label>
+                    <select @bind="selectedPeriod" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500">
+                        <option value="Morning">Morning (08:00 - 12:00)</option>
+                        <option value="Afternoon">Afternoon (13:00 - 17:00)</option>
+                    </select>
+                </div>
+
+                <div class="flex space-x-3 pt-4">
+                    <button type="button" @onclick="ToggleBlockModal" class="flex-1 bg-slate-50 hover:bg-slate-100 text-slate-700 font-medium px-4 py-2.5 rounded-lg text-sm border border-slate-200 transition-colors">
+                        Cancel
+                    </button>
+                    <button type="button" @onclick="HandleBlockTimeOff" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-medium px-4 py-2.5 rounded-lg text-sm transition-colors shadow-sm">
+                        Confirm Block
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DoctorCalendarSlotModel> slots = new();
+    private Guid currentDoctorId = Guid.NewGuid();
+    private string? notificationMessage;
+
+    // Modal fields
+    private bool showBlockModal = false;
+    private string selectedDay = "Tue 7 Jul";
+    private string selectedPeriod = "Afternoon";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSlotsAsync();
+    }
+
+    private async Task LoadSlotsAsync()
+    {
+        var result = await DoctorService.GetCalendarSlotsAsync(currentDoctorId);
+        slots = result.ToList();
+        if (slots.Count > 0)
+        {
+            selectedDay = slots[0].DayLabel;
+        }
+    }
+
+    private void ToggleBlockModal()
+    {
+        showBlockModal = !showBlockModal;
+    }
+
+    private async Task HandleBlockTimeOff()
+    {
+        var targetSlot = slots.FirstOrDefault(s => s.DayLabel == selectedDay);
+        if (targetSlot != null)
+        {
+            await DoctorService.BlockCalendarTimeOffAsync(targetSlot.Id, selectedPeriod);
+            await LoadSlotsAsync();
+        }
+
+        ToggleBlockModal();
+        notificationMessage = $"Blocked {selectedPeriod.ToLower()} availability for {selectedDay}.";
+        StateHasChanged();
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            notificationMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void DismissNotification()
+    {
+        notificationMessage = null;
+    }
+}

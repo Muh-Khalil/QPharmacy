@@ -1,0 +1,973 @@
+@page "/patient/consultation"
+@page "/patient/consultations"
+@attribute [Authorize(Roles = "Patient")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@using Microsoft.AspNetCore.SignalR.Client
+@implements IDisposable
+@inject IPatientService PatientService
+@inject IDoctorService DoctorService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Consultation Lobby - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Notification Toast -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between space-x-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div class="flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="() => notificationMessage = null" class="text-white hover:text-emerald-100 transition-colors">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         STATE 1: LOBBY WAITING ROOM (Patient is waiting for doctor)
+         ═══════════════════════════════════════════════════════════════ -->
+    @if (lobbyState == LobbyState.Waiting)
+    {
+        <div class="flex flex-col items-center justify-center min-h-[70vh] space-y-6">
+            <!-- Doctor Waiting In Room Live Alert Banner -->
+            @if (isDoctorInRoomAlert)
+            {
+                <div class="bg-gradient-to-r from-teal-600 to-emerald-600 text-white rounded-2xl p-6 shadow-2xl max-w-md w-full text-center space-y-3 animate-in zoom-in duration-300 border-2 border-teal-300">
+                    <div class="w-14 h-14 mx-auto rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
+                        <Blazicon Svg="Lucide.PhoneCall" class="w-7 h-7 text-white animate-bounce" />
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-bold">@doctorJoinedName is waiting in the room!</h2>
+                        <p class="text-xs text-teal-100 mt-1">Your doctor is ready for you now. Click below to enter the video call.</p>
+                    </div>
+                    <button @onclick="EnterCallNow" class="w-full bg-white hover:bg-teal-50 text-teal-800 font-bold text-sm py-3 rounded-xl shadow-lg transition-all hover:scale-102 cursor-pointer flex items-center justify-center space-x-2">
+                        <Blazicon Svg="Lucide.Video" class="w-4 h-4 text-teal-600" />
+                        <span>Enter Consultation Room</span>
+                    </button>
+                </div>
+            }
+
+            <!-- Animated Waiting Card -->
+            <div class="bg-white border border-slate-200 rounded-2xl shadow-xl p-10 max-w-md w-full text-center space-y-6 relative overflow-hidden">
+                <!-- Pulse ring animations -->
+                <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div class="w-48 h-48 rounded-full bg-teal-500/5 animate-ping"></div>
+                </div>
+                <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div class="w-32 h-32 rounded-full bg-teal-500/10 animate-pulse"></div>
+                </div>
+
+                <!-- Doctor Avatar with ring -->
+                <div class="relative flex justify-center z-10">
+                    <div class="w-24 h-24 rounded-full bg-gradient-to-br from-teal-500 to-teal-700 flex items-center justify-center shadow-xl ring-4 ring-teal-200 ring-offset-4">
+                        <Blazicon Svg="Lucide.Stethoscope" class="w-10 h-10 text-white" />
+                    </div>
+                    <!-- Animated ringing indicator -->
+                    <span class="absolute -top-1 -right-1 flex h-5 w-5">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-5 w-5 bg-amber-500 items-center justify-center">
+                            <Blazicon Svg="Lucide.Bell" class="w-3 h-3 text-white" />
+                        </span>
+                    </span>
+                </div>
+
+                <div class="z-10 relative space-y-2">
+                    <h1 class="text-xl font-bold text-slate-900">Waiting for Your Doctor</h1>
+                    <p class="text-sm text-slate-500">
+                        Your request has been sent to <span class="font-semibold text-slate-700">@(string.IsNullOrWhiteSpace(session.DoctorName) ? "your doctor" : session.DoctorName)</span>.
+                        They will join you shortly.
+                    </p>
+                </div>
+
+                <!-- Wait time badge -->
+                <div class="z-10 relative flex items-center justify-center space-x-2">
+                    <div class="bg-slate-100 text-slate-700 rounded-full px-4 py-1.5 text-sm font-mono font-semibold flex items-center space-x-2">
+                        <Blazicon Svg="Lucide.Clock" class="w-4 h-4 text-slate-500" />
+                        <span>Waiting @_waitDuration.ToString(@"mm\:ss")</span>
+                    </div>
+                </div>
+
+                <!-- Animated dots -->
+                <div class="z-10 relative flex items-center justify-center space-x-1.5 pt-1">
+                    <div class="w-2 h-2 rounded-full bg-teal-500 animate-bounce" style="animation-delay: 0ms;"></div>
+                    <div class="w-2 h-2 rounded-full bg-teal-500 animate-bounce" style="animation-delay: 150ms;"></div>
+                    <div class="w-2 h-2 rounded-full bg-teal-500 animate-bounce" style="animation-delay: 300ms;"></div>
+                </div>
+
+                <div class="z-10 relative border-t border-slate-100 pt-5 space-y-3">
+                    <p class="text-xs text-slate-400">While you wait, make sure your camera and microphone are ready.</p>
+                    <button @onclick="CancelWaiting" class="w-full border border-slate-200 hover:bg-slate-50 text-slate-600 font-medium text-sm py-2.5 rounded-xl transition-colors cursor-pointer">
+                        Cancel & Go Back
+                    </button>
+                </div>
+            </div>
+
+            <!-- Appointment details strip -->
+            @if (AppointmentId.HasValue && AppointmentId.Value != Guid.Empty)
+            {
+                <div class="bg-slate-50 border border-slate-200 rounded-xl px-5 py-3 max-w-md w-full flex items-center justify-between text-sm">
+                    <div class="flex items-center space-x-2 text-slate-600">
+                        <Blazicon Svg="Lucide.Calendar" class="w-4 h-4 text-teal-600" />
+                        <span>Appointment confirmed</span>
+                    </div>
+                    <span class="text-xs text-slate-400 font-mono">ID: @AppointmentId.Value.ToString()[..8]...</span>
+                </div>
+            }
+        </div>
+    }
+
+    @if (lobbyState == LobbyState.DoctorJoined && !session.IsLive)
+    {
+        <div class="flex flex-col items-center justify-center min-h-[70vh] space-y-6">
+            <div class="bg-emerald-50 border border-emerald-200 rounded-2xl shadow-xl p-10 max-w-md w-full text-center space-y-5">
+                <div class="w-20 h-20 mx-auto rounded-full bg-emerald-500 flex items-center justify-center shadow-lg animate-in zoom-in duration-500">
+                    <Blazicon Svg="Lucide.PhoneCall" class="w-10 h-10 text-white" />
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-emerald-900">Your Doctor Has Joined!</h1>
+                    <p class="text-sm text-emerald-700 mt-1">@doctorJoinedName is ready for your consultation. Joining the call now...</p>
+                </div>
+                <div class="flex items-center justify-center space-x-1.5">
+                    <div class="w-2 h-2 rounded-full bg-emerald-500 animate-bounce" style="animation-delay: 0ms;"></div>
+                    <div class="w-2 h-2 rounded-full bg-emerald-500 animate-bounce" style="animation-delay: 150ms;"></div>
+                    <div class="w-2 h-2 rounded-full bg-emerald-500 animate-bounce" style="animation-delay: 300ms;"></div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (lobbyState == LobbyState.InCall && session.IsLive)
+    {
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div>
+                <div class="flex items-center space-x-2">
+                    <span class="inline-flex items-center space-x-1.5 bg-teal-100 text-teal-800 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                        <span class="w-1.5 h-1.5 rounded-full @(session.IsLive ? "bg-emerald-500 animate-pulse" : "bg-slate-400")"></span>
+                        <span>@(session.IsLive ? "Live Telehealth Room" : "Consultation Ended")</span>
+                    </span>
+                    <span class="text-xs text-slate-400 font-mono">Room: @session.RoomId</span>
+                </div>
+                <h1 class="text-2xl font-bold text-slate-900 tracking-tight mt-1">
+                    Consultation with @(string.IsNullOrWhiteSpace(session.DoctorName) ? "Healthcare Provider" : session.DoctorName)
+                </h1>
+                <p class="text-xs text-slate-500">Secure end-to-end encrypted medical telehealth session.</p>
+            </div>
+
+            <div class="flex items-center space-x-3">
+                @if (session.IsLive)
+                {
+                    <button @onclick="EndCall" class="bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs px-3.5 py-2 rounded-lg shadow-sm transition-colors flex items-center space-x-1.5 cursor-pointer">
+                        <Blazicon Svg="Lucide.PhoneOff" class="w-3.5 h-3.5" />
+                        <span>Leave Call</span>
+                    </button>
+                }
+                else
+                {
+                    <button @onclick="GoToAppointments" class="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition-colors cursor-pointer">
+                        <span>Back to Appointments</span>
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- Main Grid: Video (Left 2 cols) + Care Plan & Chat (Right 1 col) -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            <!-- Video Column -->
+            <div class="lg:col-span-2 space-y-4">
+                <!-- Video Frame -->
+                <div style="min-height: 480px; height: 480px;" class="bg-slate-950 border border-slate-800 shadow-2xl rounded-2xl relative overflow-hidden flex items-center justify-center w-full select-none">
+                    <!-- Call Duration Badge -->
+                    <div class="absolute top-4 left-4 bg-slate-900/90 backdrop-blur border border-slate-700/60 text-slate-200 text-xs font-mono px-3 py-1 rounded-full shadow-md flex items-center space-x-2 z-20">
+                        <span class="w-2 h-2 rounded-full @(session.IsLive ? "bg-rose-500 animate-ping" : "bg-slate-500")"></span>
+                        <span>@_callDuration.ToString(@"mm\:ss")</span>
+                        <span class="text-slate-500 text-xs">HD</span>
+                    </div>
+
+                    <!-- Main Video: Remote Doctor -->
+                    <div class="w-full h-full relative flex items-center justify-center bg-slate-950">
+                        <video id="remoteVideo" class="w-full h-full object-cover" autoplay playsinline></video>
+
+                        <!-- Remote Placeholder -->
+                        <div id="remotePlaceholder" class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 space-y-3 pointer-events-none @(isRemoteCameraOff ? "hidden" : "")">
+                            <div class="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-teal-400">
+                                <Blazicon Svg="Lucide.Stethoscope" class="w-8 h-8" />
+                            </div>
+                            <div class="text-center">
+                                <p class="text-sm font-semibold text-slate-200">@(string.IsNullOrWhiteSpace(session.DoctorName) ? "Doctor" : session.DoctorName)</p>
+                                <p class="text-xs text-slate-400">Connecting doctor video stream...</p>
+                            </div>
+                        </div>
+
+                        <!-- Remote Camera Off Banner Overlay -->
+                        @if (isRemoteCameraOff)
+                        {
+                            <div class="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center text-slate-400 space-y-3 z-15 backdrop-blur-xs">
+                                <div class="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-amber-400 shadow-xl">
+                                    <Blazicon Svg="Lucide.VideoOff" class="w-8 h-8" />
+                                </div>
+                                <div class="text-center">
+                                    <p class="text-sm font-semibold text-slate-200">@(string.IsNullOrWhiteSpace(session.DoctorName) ? "Doctor" : session.DoctorName)'s Camera is Off</p>
+                                    <p class="text-xs text-slate-400">Audio call remains active</p>
+                                </div>
+                            </div>
+                        }
+
+                        <!-- Doctor Name Label with Muted Indicator -->
+                        <div class="absolute bottom-16 left-5 bg-slate-900/80 backdrop-blur border border-slate-800 text-white text-xs px-3 py-1.5 rounded-xl shadow-lg flex items-center space-x-2 z-20">
+                            <span class="w-2 h-2 rounded-full @(isRemoteCameraOff ? "bg-amber-400" : "bg-emerald-400")"></span>
+                            <span class="font-medium">@(string.IsNullOrWhiteSpace(session.DoctorName) ? "Doctor" : session.DoctorName)</span>
+                            @if (isRemoteMicMuted)
+                            {
+                                <span class="inline-flex items-center space-x-1 bg-rose-500/20 text-rose-300 border border-rose-500/40 px-1.5 py-0.5 rounded-md text-[10px] font-semibold">
+                                    <Blazicon Svg="Lucide.MicOff" class="w-2.5 h-2.5" />
+                                    <span>Muted</span>
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Self-View PIP -->
+                    <div class="absolute top-5 right-5 w-36 h-36 bg-slate-900 border-2 border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center z-20">
+                        <video id="localVideo" class="w-full h-full object-cover @(isCameraOff ? "hidden" : "")" autoplay playsinline muted></video>
+                        @if (isCameraOff)
+                        {
+                            <div class="w-full h-full bg-slate-950 flex flex-col items-center justify-center text-slate-600">
+                                <Blazicon Svg="Lucide.VideoOff" class="w-6 h-6 mb-1" />
+                                <span class="text-xs font-medium">Camera Off</span>
+                            </div>
+                        }
+                        @if (isMuted)
+                        {
+                            <div class="absolute top-2 right-2 bg-rose-600 text-white p-1 rounded-full shadow-xs z-30">
+                                <Blazicon Svg="Lucide.MicOff" class="w-3 h-3" />
+                            </div>
+                        }
+                        <div class="absolute bottom-1.5 left-2 bg-slate-900 text-slate-200 text-xs px-2 py-0.5 rounded-md font-medium border border-slate-600 z-30">
+                            You
+                        </div>
+                    </div>
+
+                    <!-- Bottom Controls -->
+                    <div class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-full px-6 py-2.5 flex items-center space-x-3.5 shadow-2xl z-30">
+                        <button @onclick="ToggleMic" class="p-3 rounded-full transition-all cursor-pointer @(isMuted ? "bg-rose-600 text-white shadow-lg ring-2 ring-rose-500/40" : "bg-slate-800 text-slate-200 hover:bg-slate-700")" title="@(isMuted ? "Unmute" : "Mute")">
+                            <Blazicon Svg="@(isMuted ? Lucide.MicOff : Lucide.Mic)" class="w-4.5 h-4.5" />
+                        </button>
+                        <button @onclick="ToggleCamera" class="p-3 rounded-full transition-all cursor-pointer @(isCameraOff ? "bg-rose-600 text-white shadow-lg ring-2 ring-rose-500/40" : "bg-slate-800 text-slate-200 hover:bg-slate-700")" title="@(isCameraOff ? "Turn Camera On" : "Turn Camera Off")">
+                            <Blazicon Svg="@(isCameraOff ? Lucide.VideoOff : Lucide.Video)" class="w-4.5 h-4.5" />
+                        </button>
+                        <button @onclick="EndCall" class="bg-rose-600 hover:bg-rose-700 text-white p-3 rounded-full shadow-lg transition-all hover:scale-105 cursor-pointer ml-1" title="Leave Call">
+                            <Blazicon Svg="Lucide.PhoneOff" class="w-4.5 h-4.5" />
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Care Plan Summary (Post-Call Visible) -->
+                @if (!string.IsNullOrWhiteSpace(session.Assessment) || !string.IsNullOrWhiteSpace(session.Plan))
+                {
+                    <div class="bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-sm">
+                        <h3 class="text-sm font-semibold text-slate-900 flex items-center space-x-2">
+                            <Blazicon Svg="Lucide.ClipboardList" class="w-4 h-4 text-teal-600" />
+                            <span>Your Care Plan</span>
+                        </h3>
+                        @if (!string.IsNullOrWhiteSpace(session.Assessment))
+                        {
+                            <div>
+                                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Assessment</p>
+                                <p class="text-sm text-slate-700 leading-relaxed">@session.Assessment</p>
+                            </div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(session.Plan))
+                        {
+                            <div>
+                                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Plan</p>
+                                <p class="text-sm text-slate-700 leading-relaxed">@session.Plan</p>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <!-- Right: Chat Panel -->
+            <div class="bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden flex flex-col" style="min-height: 480px; height: 480px;">
+                <div class="px-4 py-3 bg-slate-900 text-white flex items-center space-x-2.5 select-none">
+                    <div class="w-7 h-7 rounded-full bg-teal-500 flex items-center justify-center text-white shadow-xs">
+                        <Blazicon Svg="Lucide.MessageSquare" class="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                        <h3 class="text-xs font-bold">Consultation Chat</h3>
+                        <p class="text-xs text-emerald-400 flex items-center space-x-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                            <span>Live Synchronized</span>
+                        </p>
+                    </div>
+                </div>
+
+                <div id="patientChatContainer" class="flex-1 p-3.5 overflow-y-auto space-y-2.5 bg-slate-50/70">
+                    @if (session.ChatMessages == null || !session.ChatMessages.Any())
+                    {
+                        <div class="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center space-y-2 py-16">
+                            <Blazicon Svg="Lucide.MessageSquare" class="w-8 h-8 text-slate-300" />
+                            <p>Chat with your doctor during the consultation.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        @foreach (var msg in session.ChatMessages)
+                        {
+                            var isMyMessage = (msg.SenderId.HasValue && currentPatientId != Guid.Empty)
+                                ? (msg.SenderId.Value == currentPatientId)
+                                : !msg.IsDoctor;
+
+                            <div class="flex flex-col @(isMyMessage ? "items-end" : "items-start")">
+                                <div class="max-w-[85%] rounded-2xl px-3.5 py-1.5 text-xs shadow-2xs @(isMyMessage ? "bg-teal-600 text-white rounded-br-xs" : "bg-white border border-slate-200/80 text-slate-800 rounded-bl-xs")">
+                                    <span class="break-words leading-relaxed whitespace-pre-wrap">@msg.MessageText</span>
+                                    <span class="inline-block text-[10px] ml-2 select-none align-baseline whitespace-nowrap @(isMyMessage ? "text-teal-100/80" : "text-slate-400")">
+                                        @FormatChatTime(msg.Timestamp)
+                                    </span>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="p-2.5 bg-white border-t border-slate-100">
+                    <div class="flex items-center space-x-1.5">
+                        <input type="text"
+                               @bind="newMessageText"
+                               @bind:event="oninput"
+                               @onkeyup="HandleKeyUp"
+                               placeholder="Type a message to doctor..."
+                               class="flex-1 border border-slate-200 rounded-xl px-3 py-1.5 text-xs bg-slate-50 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-hidden transition-all" />
+                        <button @onclick="SendMessage"
+                                disabled="@string.IsNullOrWhiteSpace(newMessageText)"
+                                class="bg-teal-600 hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white p-2 rounded-xl transition-colors cursor-pointer">
+                            <Blazicon Svg="Lucide.Send" class="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (lobbyState == LobbyState.Ended || (!session.IsLive && lobbyState != LobbyState.Waiting && lobbyState != LobbyState.DoctorJoined))
+    {
+        <div class="flex flex-col items-center justify-center min-h-[70vh] space-y-6">
+            <div class="bg-white border border-slate-200 rounded-2xl shadow-xl p-10 max-w-md w-full text-center space-y-5">
+                <div class="w-20 h-20 mx-auto rounded-full bg-slate-100 flex items-center justify-center">
+                    <Blazicon Svg="Lucide.PhoneOff" class="w-10 h-10 text-slate-400" />
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-slate-800">Consultation Ended</h1>
+                    <p class="text-sm text-slate-500 mt-1">Your telehealth session has concluded. Check your care plan below.</p>
+                </div>
+                <div class="space-y-2">
+                    <button @onclick="GoToAppointments" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm py-2.5 rounded-xl transition-colors cursor-pointer">
+                        Back to Appointments
+                    </button>
+                    <button @onclick="GoToPrescriptions" class="w-full border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium text-sm py-2.5 rounded-xl transition-colors cursor-pointer">
+                        View My Prescriptions
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public Guid? AppointmentId { get; set; }
+
+    private enum LobbyState { Waiting, DoctorJoined, InCall, Ended }
+    private LobbyState lobbyState = LobbyState.Waiting;
+
+    private ConsultationSessionModel session = new();
+    private Guid currentPatientId = Guid.Empty;
+    private string patientName = "Patient";
+    private string doctorJoinedName = "Your Doctor";
+    private bool isDoctorInRoomAlert = false;
+
+    private bool isMuted = false;
+    private bool isCameraOff = false;
+    private bool isRemoteCameraOff = false;
+    private bool isRemoteMicMuted = false;
+    private TimeSpan _callDuration = TimeSpan.Zero;
+    private TimeSpan _waitDuration = TimeSpan.Zero;
+    private System.Threading.Timer? _callTimer;
+    private System.Threading.Timer? _chatRefreshTimer;
+    private System.Threading.Timer? _lobbyPollTimer;
+
+    private string newMessageText = "";
+    private string? notificationMessage;
+
+    // SignalR hub connection (for lobby notifications)
+    private Microsoft.AspNetCore.SignalR.Client.HubConnection? _hubConnection;
+    private DotNetObjectReference<ConsultationLobby>? _dotNetRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _dotNetRef = DotNetObjectReference.Create(this);
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            var idClaim = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (Guid.TryParse(idClaim, out var pid)) currentPatientId = pid;
+            if (!string.IsNullOrWhiteSpace(user.Identity.Name)) patientName = user.Identity.Name;
+        }
+
+        await LoadConsultationSession();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var storedId = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authUserId");
+            var storedName = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authFirstName");
+
+            if (currentPatientId == Guid.Empty && Guid.TryParse(storedId, out var parsed))
+            {
+                currentPatientId = parsed;
+            }
+            if (!string.IsNullOrWhiteSpace(storedName) && (patientName == "Patient" || string.IsNullOrWhiteSpace(patientName)))
+            {
+                patientName = storedName;
+            }
+
+            // Connect SignalR for lobby notifications
+            await ConnectLobbySignalR();
+
+            if (lobbyState == LobbyState.Waiting)
+            {
+                // Patient joins lobby: notify doctor via SignalR
+                await JoinLobbyAndNotifyDoctor();
+
+                // Start wait timer
+                _callTimer?.Dispose();
+                _callTimer = new System.Threading.Timer(async _ =>
+                {
+                    _waitDuration = _waitDuration.Add(TimeSpan.FromSeconds(1));
+                    await InvokeAsync(StateHasChanged);
+                }, null, 1000, 1000);
+
+                // Poll DB every 2.5s to see if doctor has accepted (fallback to SignalR)
+                _lobbyPollTimer?.Dispose();
+                _lobbyPollTimer = new System.Threading.Timer(async _ =>
+                {
+                    await InvokeAsync(PollForDoctorAcceptance);
+                }, null, 2500, 2500);
+            }
+            else if (lobbyState == LobbyState.InCall || session.IsLive)
+            {
+                await StartVideoCall();
+            }
+        }
+        else if (lobbyState == LobbyState.InCall || session.IsLive)
+        {
+            await JSRuntime.InvokeVoidAsync("webrtcInterop.rebindVideoElements");
+        }
+    }
+
+    private async Task ConnectLobbySignalR()
+    {
+        try
+        {
+            var hubUrl = Navigation.ToAbsoluteUri("/consultationHub").ToString();
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(hubUrl)
+                .WithAutomaticReconnect()
+                .Build();
+
+            // Doctor is waiting in room alert
+            _hubConnection.On<string, string>("DoctorWaitingInRoom", async (doctorName, apptId) =>
+            {
+                doctorJoinedName = doctorName;
+                isDoctorInRoomAlert = true;
+                try { await JSRuntime.InvokeVoidAsync("webrtcInterop.playRingtone"); } catch { }
+                await InvokeAsync(StateHasChanged);
+            });
+
+            // Doctor accepted patient notification (with appointment ID)
+            _hubConnection.On<string, string>("DoctorJoined", async (doctorName, apptId) =>
+            {
+                if (Guid.TryParse(apptId, out var parsedAppt) && parsedAppt != Guid.Empty)
+                {
+                    AppointmentId = parsedAppt;
+                    session.AppointmentId = parsedAppt;
+                    session.RoomId = $"room-consultation-{parsedAppt.ToString().ToLowerInvariant()}";
+                }
+                await HandleDoctorJoined(doctorName);
+            });
+
+            // Doctor accepted patient notification (1 param overload)
+            _hubConnection.On<string>("DoctorJoined", async (doctorName) =>
+            {
+                await HandleDoctorJoined(doctorName);
+            });
+
+            // Listen for call ended
+            _hubConnection.On("CallEnded", async () =>
+            {
+                await OnRemoteCallEnded();
+            });
+
+            _hubConnection.On<string>("ConsultationEndedInRoom", async (endedRoomId) =>
+            {
+                if (lobbyState == LobbyState.InCall &&
+                    (string.Equals(endedRoomId, GetRoomId(), StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(endedRoomId, session.RoomId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    await OnRemoteCallEnded();
+                }
+            });
+
+            _hubConnection.On<bool, bool>("ReceiveRemoteMediaStatus", (remoteCameraOff, remoteMicMuted) =>
+            {
+                isRemoteCameraOff = remoteCameraOff;
+                isRemoteMicMuted = remoteMicMuted;
+                InvokeAsync(StateHasChanged);
+            });
+
+            await _hubConnection.StartAsync();
+
+            // Join personal return room
+            var patientRoomId = $"lobby-patient-{currentPatientId.ToString().ToLowerInvariant()}";
+            await _hubConnection.SendAsync("JoinPatientLobbyRoom", patientRoomId);
+        }
+        catch { }
+    }
+
+    [JSInvokable]
+    public void OnRemoteMediaStatusChanged(bool remoteCameraOff, bool remoteMicMuted)
+    {
+        isRemoteCameraOff = remoteCameraOff;
+        isRemoteMicMuted = remoteMicMuted;
+        InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnRemoteCallEnded()
+    {
+        await InvokeAsync(async () =>
+        {
+            session.IsLive = false;
+            lobbyState = LobbyState.Ended;
+            _callTimer?.Dispose();
+            _callTimer = null;
+            try { await JSRuntime.InvokeVoidAsync("webrtcInterop.endCall", false); } catch { }
+            notificationMessage = "Consultation call ended by doctor.";
+            StateHasChanged();
+        });
+    }
+
+    private async Task HandleDoctorJoined(string doctorName)
+    {
+        doctorJoinedName = doctorName;
+        isDoctorInRoomAlert = false;
+        lobbyState = LobbyState.DoctorJoined;
+        await InvokeAsync(StateHasChanged);
+
+        await Task.Delay(1200);
+        await LoadConsultationSession();
+        lobbyState = LobbyState.InCall;
+        session.IsLive = true;
+        _lobbyPollTimer?.Dispose();
+        _lobbyPollTimer = null;
+        SyncCallDuration();
+        StartCallTimers();
+        await InvokeAsync(StateHasChanged);
+        await StartVideoCall();
+    }
+
+    private async Task JoinLobbyAndNotifyDoctor()
+    {
+        try
+        {
+            var apptId = AppointmentId ?? session.AppointmentId ?? Guid.Empty;
+            if (apptId != Guid.Empty)
+            {
+                await PatientService.JoinLobbyAsync(apptId, currentPatientId);
+            }
+
+            var doctorId = session.DoctorId ?? Guid.Empty;
+            var doctorLobbyRoomId = doctorId != Guid.Empty
+                ? $"lobby-doctor-{doctorId.ToString().ToLowerInvariant()}"
+                : "lobby-doctor-default";
+
+            var patientRoomId = $"lobby-patient-{currentPatientId.ToString().ToLowerInvariant()}";
+            var appointmentIdStr = AppointmentId?.ToString() ?? session.AppointmentId?.ToString() ?? "";
+            var scheduledTimeStr = session.StartedAt?.ToString("HH:mm") ?? DateTime.Now.ToString("HH:mm");
+
+            if (_hubConnection is not null)
+            {
+                await _hubConnection.SendAsync("PatientJoinedLobby",
+                    doctorLobbyRoomId,
+                    patientRoomId,
+                    patientName,
+                    currentPatientId.ToString(),
+                    appointmentIdStr,
+                    scheduledTimeStr);
+            }
+        }
+        catch { }
+    }
+
+    private async Task PollForDoctorAcceptance()
+    {
+        try
+        {
+            ConsultationSessionModel? updated = null;
+            if (AppointmentId.HasValue && AppointmentId.Value != Guid.Empty)
+            {
+                updated = await DoctorService.GetConsultationSessionByAppointmentIdAsync(AppointmentId.Value);
+            }
+            if (updated == null && currentPatientId != Guid.Empty)
+            {
+                updated = await PatientService.GetActiveConsultationForPatientAsync(currentPatientId);
+            }
+
+            if (updated != null && updated.Status == "InProgress" && updated.IsLive)
+            {
+                session = updated;
+                isDoctorInRoomAlert = false;
+                lobbyState = LobbyState.InCall;
+                
+                _lobbyPollTimer?.Dispose();
+                _lobbyPollTimer = null;
+
+                SyncCallDuration();
+                StartCallTimers();
+
+                await StartVideoCall();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { }
+    }
+
+    private async Task EnterCallNow()
+    {
+        isDoctorInRoomAlert = false;
+        lobbyState = LobbyState.InCall;
+        session.IsLive = true;
+
+        _lobbyPollTimer?.Dispose();
+        _lobbyPollTimer = null;
+
+        await LoadConsultationSession();
+        session.IsLive = true;
+        SyncCallDuration();
+        StartCallTimers();
+
+        await StartVideoCall();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void StartCallTimers()
+    {
+        _callTimer?.Dispose();
+        _callTimer = new System.Threading.Timer(async _ =>
+        {
+            if (session.IsLive)
+            {
+                _callDuration = _callDuration.Add(TimeSpan.FromSeconds(1));
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, 1000, 1000);
+
+        _chatRefreshTimer?.Dispose();
+        _chatRefreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(RefreshSessionData);
+        }, null, 1500, 1500);
+    }
+
+    private async Task StartVideoCall()
+    {
+        try
+        {
+            isRemoteCameraOff = false;
+            isRemoteMicMuted = false;
+            var hubUrl = Navigation.ToAbsoluteUri("/consultationHub").ToString();
+            var room = GetRoomId();
+            session.RoomId = room;
+            if (_hubConnection is not null && _hubConnection.State == HubConnectionState.Connected)
+            {
+                try
+                {
+                    await _hubConnection.SendAsync("JoinRoom", room);
+                    await _hubConnection.SendAsync("SendMediaStatus", room, isCameraOff, isMuted);
+                }
+                catch { }
+            }
+            await JSRuntime.InvokeVoidAsync("webrtcInterop.initialize", hubUrl, room, false, _dotNetRef);
+        }
+        catch { }
+    }
+
+    private async Task LoadConsultationSession()
+    {
+        ConsultationSessionModel? active = null;
+        if (AppointmentId.HasValue && AppointmentId.Value != Guid.Empty)
+        {
+            active = await DoctorService.GetConsultationSessionByAppointmentIdAsync(AppointmentId.Value);
+        }
+
+        if (active == null && currentPatientId != Guid.Empty)
+        {
+            active = await PatientService.GetActiveConsultationForPatientAsync(currentPatientId);
+        }
+
+        if (active != null)
+        {
+            session = active;
+            if (session.Status == "InProgress" && session.IsLive)
+            {
+                lobbyState = LobbyState.InCall;
+                SyncCallDuration();
+                StartCallTimers();
+            }
+            else if (session.Status == "Completed")
+            {
+                lobbyState = LobbyState.Ended;
+            }
+        }
+        else
+        {
+            session = new ConsultationSessionModel
+            {
+                Id = Guid.NewGuid(),
+                AppointmentId = AppointmentId,
+                PatientId = currentPatientId,
+                PatientName = patientName,
+                DoctorName = "Your Doctor",
+                Status = "Scheduled",
+                IsLive = false
+            };
+        }
+    }
+
+    private void SyncCallDuration()
+    {
+        var callStart = session.StartedAt ?? session.CreatedAt;
+        if (callStart.HasValue && callStart.Value != default && session.Status == "InProgress")
+        {
+            var elapsed = DateTime.UtcNow - callStart.Value;
+            if (elapsed >= TimeSpan.Zero)
+            {
+                _callDuration = elapsed;
+            }
+        }
+    }
+
+    private async Task RefreshSessionData()
+    {
+        try
+        {
+            ConsultationSessionModel? updated = null;
+            if (session.AppointmentId.HasValue && session.AppointmentId.Value != Guid.Empty)
+            {
+                updated = await DoctorService.GetConsultationSessionByAppointmentIdAsync(session.AppointmentId.Value);
+            }
+            if (updated == null && session.Id != Guid.Empty)
+            {
+                updated = await DoctorService.GetConsultationSessionByIdAsync(session.Id);
+            }
+
+            if (updated != null)
+            {
+                session.Assessment = updated.Assessment;
+                session.Plan = updated.Plan;
+                session.ReferralNote = updated.ReferralNote;
+                session.Status = updated.Status;
+                session.IsLive = updated.IsLive && updated.Status != "Completed";
+                session.StartedAt = updated.StartedAt;
+                session.CreatedAt = updated.CreatedAt;
+
+                SyncCallDuration();
+
+                if (updated.ChatMessages != null && updated.ChatMessages.Count != session.ChatMessages.Count)
+                {
+                    session.ChatMessages = updated.ChatMessages;
+                    await DoctorService.MarkMessagesAsReadAsync(session.Id, isDoctorViewer: false);
+                    await InvokeAsync(StateHasChanged);
+                    await ScrollChatToBottom();
+                }
+
+                if (!session.IsLive && lobbyState == LobbyState.InCall)
+                {
+                    lobbyState = LobbyState.Ended;
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+        }
+        catch { }
+    }
+
+    private string GetRoomId()
+    {
+        if (AppointmentId.HasValue && AppointmentId.Value != Guid.Empty)
+            return $"room-consultation-{AppointmentId.Value.ToString().ToLowerInvariant()}";
+        if (session.AppointmentId.HasValue && session.AppointmentId.Value != Guid.Empty)
+            return $"room-consultation-{session.AppointmentId.Value.ToString().ToLowerInvariant()}";
+        if (!string.IsNullOrWhiteSpace(session.RoomId)) return session.RoomId;
+        var pid = session.PatientId != Guid.Empty ? session.PatientId : currentPatientId;
+        return $"room-{pid.ToString().ToLowerInvariant()}";
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(newMessageText)) return;
+        var text = newMessageText.Trim();
+        newMessageText = "";
+
+        try
+        {
+            await DoctorService.SendChatMessageAsync(session.Id, patientName, text, false, currentPatientId);
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("webrtcInterop.sendChatMessage", GetRoomId(), patientName, text, false, currentPatientId.ToString());
+            }
+            catch { }
+
+            await DoctorService.MarkMessagesAsReadAsync(session.Id, isDoctorViewer: false);
+            await RefreshSessionData();
+            await ScrollChatToBottom();
+        }
+        catch (Exception ex)
+        {
+            notificationMessage = $"Failed to send message: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SendMessage();
+    }
+
+    private async Task ToggleMic()
+    {
+        isMuted = !isMuted;
+        await JSRuntime.InvokeVoidAsync("webrtcInterop.toggleMic", isMuted);
+        await BroadcastMediaStatus();
+    }
+
+    private async Task ToggleCamera()
+    {
+        isCameraOff = !isCameraOff;
+        await JSRuntime.InvokeVoidAsync("webrtcInterop.toggleCamera", isCameraOff);
+        await BroadcastMediaStatus();
+    }
+
+    private async Task BroadcastMediaStatus()
+    {
+        try
+        {
+            var roomId = GetRoomId();
+            if (_hubConnection is not null && _hubConnection.State == HubConnectionState.Connected && !string.IsNullOrWhiteSpace(roomId))
+            {
+                await _hubConnection.SendAsync("SendMediaStatus", roomId, isCameraOff, isMuted);
+            }
+        }
+        catch { }
+    }
+
+    private async Task EndCall()
+    {
+        session.IsLive = false;
+        lobbyState = LobbyState.Ended;
+        _callTimer?.Dispose();
+        _callTimer = null;
+        try
+        {
+            var roomId = GetRoomId();
+            await JSRuntime.InvokeVoidAsync("webrtcInterop.notifyCallEnded", roomId);
+            await JSRuntime.InvokeVoidAsync("webrtcInterop.endCall", false);
+
+            if (_hubConnection is not null && _hubConnection.State == HubConnectionState.Connected)
+            {
+                try { await _hubConnection.SendAsync("NotifyCallEnded", roomId); } catch { }
+            }
+
+            if (session.Id != Guid.Empty)
+            {
+                await DoctorService.SetConsultationLiveStatusAsync(session.Id, false);
+            }
+        }
+        catch { }
+
+        notificationMessage = "You have left the telehealth room.";
+        StateHasChanged();
+    }
+
+    private async Task CancelWaiting()
+    {
+        try
+        {
+            var apptId = AppointmentId ?? session.AppointmentId ?? Guid.Empty;
+            if (apptId != Guid.Empty)
+            {
+                await PatientService.LeaveLobbyAsync(apptId, currentPatientId);
+            }
+
+            if (_hubConnection is not null)
+            {
+                var doctorId = session.DoctorId ?? Guid.Empty;
+                var doctorLobbyRoomId = doctorId != Guid.Empty
+                    ? $"lobby-doctor-{doctorId.ToString().ToLowerInvariant()}"
+                    : "lobby-doctor-default";
+                await _hubConnection.SendAsync("PatientLeftLobby", doctorLobbyRoomId, currentPatientId.ToString());
+            }
+        }
+        catch { }
+
+        Navigation.NavigateTo("/patient/appointments");
+    }
+
+    private async Task ScrollChatToBottom()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("eval", "var el = document.getElementById('patientChatContainer'); if(el) el.scrollTop = el.scrollHeight;");
+        }
+        catch { }
+    }
+
+    private string FormatChatTime(DateTime timestamp)
+    {
+        if (timestamp == default) return "Just now";
+        DateTime localTime = timestamp.Kind switch
+        {
+            DateTimeKind.Utc => timestamp.ToLocalTime(),
+            DateTimeKind.Unspecified => DateTime.SpecifyKind(timestamp, DateTimeKind.Utc).ToLocalTime(),
+            _ => timestamp
+        };
+        return localTime.ToString("h:mm tt", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private void GoToAppointments() => Navigation.NavigateTo("/patient/appointments");
+    private void GoToPrescriptions() => Navigation.NavigateTo("/patient/prescriptions");
+
+    public void Dispose()
+    {
+        _callTimer?.Dispose();
+        _chatRefreshTimer?.Dispose();
+        _lobbyPollTimer?.Dispose();
+        _dotNetRef?.Dispose();
+        _ = Task.Run(async () =>
+        {
+            try { await JSRuntime.InvokeVoidAsync("webrtcInterop.endCall", false); } catch { }
+            try { if (_hubConnection is not null) await _hubConnection.DisposeAsync(); }
+            catch { }
+        });
+    }
+}

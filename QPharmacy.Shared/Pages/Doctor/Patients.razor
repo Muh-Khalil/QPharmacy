@@ -1,0 +1,258 @@
+@page "/doctor/patients"
+@attribute [Authorize(Roles = "Doctor")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@inject IDoctorService DoctorService
+@inject NavigationManager Navigation
+
+<PageTitle>Patients - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Success / Info Alert Toast -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between space-x-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div class="flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="DismissNotification" class="text-white hover:text-emerald-100 transition-colors">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Patients</h1>
+            <p class="text-sm text-slate-500 mt-1">Everyone under your care.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <button @onclick="ToggleAddPatientModal" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Add patient</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="mb-6 max-w-md">
+        <div class="relative">
+            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <Blazicon Svg="Lucide.Search" class="w-4 h-4" />
+            </div>
+            <input type="text"
+                   @bind="searchTerm"
+                   @bind:event="oninput"
+                   placeholder="Search patients"
+                   class="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm" />
+        </div>
+    </div>
+
+    <!-- Patients Table Container -->
+    <div class="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-slate-100 bg-slate-50/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                        <th class="py-4 px-6">Patient</th>
+                        <th class="py-4 px-6">Last visit</th>
+                        <th class="py-4 px-6">Condition</th>
+                        <th class="py-4 px-6">Medical aid</th>
+                        <th class="py-4 px-6 text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 text-sm">
+                    @if (FilteredPatients == null || !FilteredPatients.Any())
+                    {
+                        <tr>
+                            <td colspan="5" class="py-8 text-center text-slate-400">
+                                No patients found matching your search.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var patient in FilteredPatients)
+                        {
+                            <tr class="hover:bg-slate-50/50 transition-colors">
+                                <td class="py-4 px-6">
+                                    <div class="font-semibold text-slate-900">@patient.PatientName</div>
+                                    <div class="text-xs text-slate-400 mt-0.5">Age @patient.Age</div>
+                                </td>
+                                <td class="py-4 px-6 text-slate-600">
+                                    @patient.LastVisitDate
+                                </td>
+                                <td class="py-4 px-6 text-slate-600">
+                                    @patient.ConditionSummary
+                                </td>
+                                <td class="py-4 px-6 text-slate-600">
+                                    @patient.MedicalAid
+                                </td>
+                                <td class="py-4 px-6 text-right">
+                                    <button @onclick="() => OpenPatientRecord(patient.PatientId)" class="border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium px-3.5 py-1.5 rounded-lg text-xs transition-colors shadow-sm">
+                                        Open record
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Add Patient Modal -->
+@if (showAddModal)
+{
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-md w-full mx-4 p-6 animate-in fade-in zoom-in-95 duration-200">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-lg font-bold text-slate-900">Add New Patient</h3>
+                <button @onclick="ToggleAddPatientModal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Full Name</label>
+                    <input type="text" @bind="newPatientName" placeholder="e.g. Ntando Mokoena" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Age</label>
+                        <input type="number" @bind="newPatientAge" placeholder="e.g. 42" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Medical Aid</label>
+                        <select @bind="newMedicalAid" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500">
+                            <option value="Discovery Health">Discovery Health</option>
+                            <option value="Bonitas">Bonitas</option>
+                            <option value="Momentum">Momentum</option>
+                            <option value="Medshield">Medshield</option>
+                            <option value="Private">Private</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Condition Summary</label>
+                    <input type="text" @bind="newCondition" placeholder="e.g. Asthma, Hypertension" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+
+                <div class="flex space-x-3 pt-4">
+                    <button type="button" @onclick="ToggleAddPatientModal" class="flex-1 bg-slate-50 hover:bg-slate-100 text-slate-700 font-medium px-4 py-2.5 rounded-lg text-sm border border-slate-200 transition-colors">
+                        Cancel
+                    </button>
+                    <button type="button" @onclick="HandleAddPatient" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-medium px-4 py-2.5 rounded-lg text-sm transition-colors shadow-sm">
+                        Add Patient
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DoctorPatientModel> patients = new();
+    private string searchTerm = "";
+    private Guid currentDoctorId = Guid.NewGuid();
+    private string? notificationMessage;
+
+    // Modal fields
+    private bool showAddModal = false;
+    private string newPatientName = "";
+    private int newPatientAge = 35;
+    private string newMedicalAid = "Discovery Health";
+    private string newCondition = "General checkup";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPatientsAsync();
+    }
+
+    private async Task LoadPatientsAsync()
+    {
+        var result = await DoctorService.GetDoctorPatientsAsync(currentDoctorId);
+        patients = result.ToList();
+    }
+
+    private IEnumerable<DoctorPatientModel> FilteredPatients
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(searchTerm)) return patients;
+            return patients.Where(p => p.PatientName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                                       p.ConditionSummary.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                                       p.MedicalAid.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private void OpenPatientRecord(Guid patientId)
+    {
+        Navigation.NavigateTo($"/patient/records?patientId={patientId}");
+    }
+
+    private void ToggleAddPatientModal()
+    {
+        showAddModal = !showAddModal;
+        if (!showAddModal)
+        {
+            newPatientName = "";
+            newPatientAge = 35;
+            newMedicalAid = "Discovery Health";
+            newCondition = "General checkup";
+        }
+    }
+
+    private async Task HandleAddPatient()
+    {
+        if (string.IsNullOrWhiteSpace(newPatientName))
+        {
+            notificationMessage = "Please enter patient name.";
+            StateHasChanged();
+            return;
+        }
+
+        var addedPatientName = newPatientName.Trim();
+
+        var newPatient = new DoctorPatientModel
+        {
+            PatientId = Guid.NewGuid(),
+            PatientName = addedPatientName,
+            Age = newPatientAge,
+            LastVisitDate = DateTime.Now.ToString("d MMM yyyy"),
+            ConditionSummary = newCondition,
+            MedicalAid = newMedicalAid
+        };
+
+        await DoctorService.AddPatientAsync(newPatient);
+        await LoadPatientsAsync();
+        showAddModal = false; // Immediately hide dialog modal
+
+        // Reset inputs
+        newPatientName = "";
+        newPatientAge = 35;
+        newMedicalAid = "Discovery Health";
+        newCondition = "General checkup";
+
+        notificationMessage = $"{addedPatientName} added to patient list successfully!";
+        StateHasChanged(); // Instantly re-render UI so modal vanishes
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            notificationMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void DismissNotification()
+    {
+        notificationMessage = null;
+    }
+}

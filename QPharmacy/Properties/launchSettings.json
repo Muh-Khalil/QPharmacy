@@ -1,0 +1,15 @@
+{
+  "profiles": {
+    "Windows Machine": {
+      "commandName": "Project",
+      "nativeDebugging": false
+    },
+    "Android Emulator": {
+      "commandName": "Project",
+      "nativeDebugging": false,
+      "environmentVariables": {
+        "DOTNET_WATCH_SUPPRESS_BROWSER_REFRESH": "1"
+      }
+    }
+  }
+}

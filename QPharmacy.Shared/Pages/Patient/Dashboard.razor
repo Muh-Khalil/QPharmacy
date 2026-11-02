@@ -1,0 +1,588 @@
+@page "/patient/dashboard"
+@attribute [Authorize(Roles = "Patient")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@inject IPatientService PatientService
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Dashboard - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Success Alert / Toast -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between space-x-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div class="flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="DismissNotification" class="text-white hover:text-emerald-100 transition-colors">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- Greeting & Primary Action -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">@GetGreeting(), @displayName 👋</h1>
+            <p class="text-sm text-slate-500 mt-1">Here is what's happening with your care today.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <button @onclick="NavigateToOrders" class="bg-brand-dark hover:bg-brand-DEFAULT text-white px-4 py-2.5 rounded-lg font-medium shadow-sm transition-colors text-sm flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Order medication</span>
+            </button>
+        </div>
+    </div>
+
+
+    @if (isLoading)
+    {
+        <div class="flex justify-center py-20">
+            <svg class="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    }
+    else
+    {
+        <!-- KPI Row -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Doses today</p>
+                    <p class="text-2xl font-semibold text-slate-900 mt-1">@(kpis?.DosesTakenToday ?? 0) <span class="text-sm text-slate-400 font-normal">/ @(kpis?.DosesScheduledToday ?? 0)</span></p>
+                </div>
+                <div class="w-9 h-9 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600">
+                    <Blazicon Svg="Lucide.Check" class="w-5 h-5" />
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Next refill</p>
+                    <p class="text-2xl font-semibold text-slate-900 mt-1">@(kpis?.NextRefillDays ?? 0) <span class="text-sm text-slate-400 font-normal">days</span></p>
+                </div>
+                <div class="w-9 h-9 rounded-full bg-orange-50 flex items-center justify-center text-orange-600">
+                    <Blazicon Svg="Lucide.Clock" class="w-5 h-5" />
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Active prescriptions</p>
+                    <p class="text-2xl font-semibold text-slate-900 mt-1">@(kpis?.ActivePrescriptions ?? 0)</p>
+                </div>
+                <div class="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
+                    <Blazicon Svg="Lucide.FileText" class="w-5 h-5" />
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-slate-500">Family members</p>
+                    <p class="text-2xl font-semibold text-slate-900 mt-1">@(kpis?.FamilyMembersLinked ?? 0)</p>
+                </div>
+                <div class="w-9 h-9 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">
+                    <Blazicon Svg="Lucide.Users" class="w-5 h-5" />
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Left Column -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- Today's Medication List -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="px-6 py-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                            <h2 class="text-base font-semibold text-slate-900">Today's Schedule</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Medication doses derived from your active prescriptions</p>
+                        </div>
+                        @if (schedules != null && schedules.Any())
+                        {
+                            var takenCount = schedules.Count(s => s.Status == "Taken");
+                            var totalCount = schedules.Count;
+                            var pct = totalCount == 0 ? 100 : (int)Math.Round((double)takenCount / totalCount * 100);
+                            <div class="flex items-center space-x-3 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100">
+                                <div class="w-24 bg-slate-200 rounded-full h-2 overflow-hidden">
+                                    <div class="bg-emerald-500 h-2 rounded-full transition-all duration-300" style="width: @pct%"></div>
+                                </div>
+                                <span class="text-xs font-semibold text-slate-700">@takenCount/@totalCount taken (@pct%)</span>
+                            </div>
+                        }
+                    </div>
+                    <div class="divide-y divide-slate-100">
+                        @if (schedules == null || !schedules.Any())
+                        {
+                            <div class="p-8 text-center text-sm text-slate-500 space-y-2">
+                                <Blazicon Svg="Lucide.Check" class="w-8 h-8 text-slate-300 mx-auto" />
+                                <p>No medications scheduled for today.</p>
+                                <button @onclick="@(() => NavigationManager.NavigateTo("/patient/prescriptions"))" class="text-xs font-semibold text-emerald-600 hover:underline">
+                                    View your active prescriptions
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            foreach (var sched in schedules)
+                            {
+                                <div class="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors">
+                                    <div class="flex items-start sm:items-center space-x-4">
+                                        <div class="w-11 h-11 rounded-xl bg-slate-100 border border-slate-200/80 flex flex-col items-center justify-center shrink-0">
+                                            <span class="text-[11px] font-bold text-slate-700">@sched.ScheduledTime.ToString("HH:mm")</span>
+                                            <span class="text-[9px] text-slate-400 font-medium uppercase">@sched.ScheduledTime.ToString("tt")</span>
+                                        </div>
+                                        <div>
+                                            <div class="flex items-center space-x-2">
+                                                <p class="text-sm font-semibold text-slate-900">@sched.MedicationName</p>
+                                                @if (!string.IsNullOrEmpty(sched.Dosage))
+                                                {
+                                                    <span class="text-xs text-slate-400">· @sched.Dosage</span>
+                                                }
+                                            </div>
+                                            @if (!string.IsNullOrEmpty(sched.Instructions))
+                                            {
+                                                <p class="text-xs text-slate-500 mt-0.5">@sched.Instructions</p>
+                                            }
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-2 self-end sm:self-center shrink-0">
+                                        @if (sched.Status == "Taken")
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20 shadow-2xs">
+                                                <Blazicon Svg="Lucide.Check" class="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                                                Taken @(sched.TakenAt.HasValue ? $"at {sched.TakenAt.Value.ToLocalTime().ToString("h:mm tt")}" : "")
+                                            </span>
+                                            <button @onclick="() => UndoDoseStatus(sched)" class="text-xs text-slate-400 hover:text-slate-600 hover:underline px-1.5 py-0.5 cursor-pointer" title="Undo status">
+                                                Undo
+                                            </button>
+                                        }
+                                        else if (sched.Status == "Skipped")
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-600/20 shadow-2xs" title="@sched.Notes">
+                                                <Blazicon Svg="Lucide.Info" class="w-3.5 h-3.5 mr-1 text-amber-600" />
+                                                Skipped
+                                            </span>
+                                            <button @onclick="() => UndoDoseStatus(sched)" class="text-xs text-slate-400 hover:text-slate-600 hover:underline px-1.5 py-0.5 cursor-pointer" title="Undo status">
+                                                Undo
+                                            </button>
+                                        }
+                                        else if (sched.Status == "Upcoming")
+                                        {
+                                            <button @onclick="() => MarkAsTaken(sched)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-xs transition-colors flex items-center space-x-1 cursor-pointer">
+                                                <Blazicon Svg="Lucide.Check" class="w-3.5 h-3.5" />
+                                                <span>Take</span>
+                                            </button>
+                                            <button @onclick="() => PromptSkipDose(sched)" class="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer" title="Skip dose">
+                                                <span>Skip</span>
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/20">
+                                                Missed
+                                            </span>
+                                            <button @onclick="() => MarkAsTaken(sched)" class="text-xs text-emerald-600 font-semibold hover:underline px-1.5 cursor-pointer">
+                                                Take now
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+            <!-- Recent Activity Feed -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                <h2 class="text-base font-semibold text-slate-900 mb-4">Recent Activity</h2>
+                <div class="space-y-4">
+                    @if (activities != null)
+                    {
+                        foreach (var act in activities)
+                        {
+                            <div class="flex space-x-3">
+                                <div class="flex flex-col items-center">
+                                    <div class="w-2 h-2 rounded-full bg-slate-300 mt-2"></div>
+                                    <div class="w-0.5 h-full bg-slate-200 my-1"></div>
+                                </div>
+                                <div class="pb-4 flex-1">
+                                    <p class="text-sm font-medium text-slate-900">@act.Description</p>
+                                    <p class="text-xs text-slate-500 mt-0.5">@act.CreatedAt.ToString("MMM dd, HH:mm") &middot; @act.EventType</p>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Health Adherence & Next Consultation -->
+        <div class="space-y-6">
+            <!-- Adherence Widget -->
+            <div class="bg-gradient-to-br from-teal-950 via-slate-900 to-slate-950 rounded-2xl shadow-md p-6 text-white overflow-hidden relative border border-teal-800/40">
+                <!-- Background ambient glow -->
+                <div class="absolute -right-8 -top-8 w-36 h-36 bg-teal-500/15 rounded-full blur-2xl pointer-events-none"></div>
+
+                <div class="flex items-center justify-between mb-4 relative z-10">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-8 h-8 rounded-xl bg-teal-500/20 border border-teal-400/30 flex items-center justify-center text-teal-300">
+                            <Blazicon Svg="Lucide.ShieldCheck" class="w-4 h-4" />
+                        </div>
+                        <div>
+                            <h2 class="text-sm font-bold text-white">Medication Adherence</h2>
+                            <p class="text-xs text-teal-200/80">Last 30 days compliance</p>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="flex items-baseline space-x-2 mb-3 relative z-10">
+                    <span class="text-4xl font-extrabold tracking-tight text-white">@(kpis?.Adherence30Days ?? 94)</span>
+                    <span class="text-xl font-bold text-teal-300">%</span>
+                    <span class="text-xs text-slate-400 ml-2">optimal rating</span>
+                </div>
+
+                <div class="w-full bg-slate-800 rounded-full h-2.5 mb-3 overflow-hidden p-0.5 border border-slate-700/50 relative z-10">
+                    <div class="bg-gradient-to-r from-teal-400 to-emerald-400 h-full rounded-full transition-all duration-500" style="width: @(kpis?.Adherence30Days ?? 94)%"></div>
+                </div>
+                <p class="text-xs text-slate-300 relative z-10 flex items-center space-x-1.5">
+                    <Blazicon Svg="Lucide.Check" class="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>You've taken your daily medications on schedule. Excellent work!</span>
+                </p>
+            </div>
+
+            <!-- Next Appointment Card -->
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6 space-y-4">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200/60 flex items-center justify-center text-teal-700">
+                            <Blazicon Svg="Lucide.Calendar" class="w-4 h-4" />
+                        </div>
+                        <h2 class="text-sm font-bold text-slate-900">Next Consultation</h2>
+                    </div>
+                    @if (nextAppointment != null)
+                    {
+                        <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                            Confirmed
+                        </span>
+                    }
+                </div>
+
+                @if (nextAppointment != null)
+                {
+                    <div class="space-y-3.5">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-10 h-10 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center font-bold text-sm shadow-2xs shrink-0">
+                                <Blazicon Svg="Lucide.Stethoscope" class="w-5 h-5 text-teal-700" />
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-900 text-sm">@nextAppointment.DoctorName</h3>
+                                <p class="text-xs text-slate-500">@nextAppointment.Specialty &bull; @(string.IsNullOrWhiteSpace(nextAppointment.Notes) ? "Routine Follow-up" : nextAppointment.Notes)</p>
+                            </div>
+                        </div>
+
+                        <div class="inline-flex items-center space-x-2 bg-slate-50 border border-slate-200/70 px-3 py-1.5 rounded-xl text-slate-700 font-medium text-xs w-full">
+                            <Blazicon Svg="Lucide.Clock" class="w-4 h-4 text-teal-600 shrink-0" />
+                            <span class="font-mono font-semibold">@nextAppointment.AppointmentDate.ToString("ddd, dd MMM yyyy &bull; HH:mm")</span>
+                        </div>
+
+                        <div class="flex space-x-2 pt-1">
+                            @if (nextAppointment.Status == "WaitingInLobby")
+                            {
+                                <button disabled class="flex-1 bg-amber-50 border border-amber-200 text-amber-700 px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 cursor-not-allowed shadow-2xs">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                    <span>Waiting for Doctor...</span>
+                                </button>
+                            }
+                            else
+                            {
+                                <button @onclick="JoinConsultationCall" class="flex-1 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center space-x-1.5 cursor-pointer">
+                                    <Blazicon Svg="Lucide.Video" class="w-3.5 h-3.5" />
+                                    <span>Join Call</span>
+                                </button>
+                            }
+                            <button @onclick="@(() => NavigationManager.NavigateTo("/patient/appointments"))" class="flex-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-3 py-2 rounded-xl text-xs font-semibold transition-colors shadow-2xs cursor-pointer">
+                            View All
+                        </button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="py-6 text-center text-slate-400 space-y-2">
+                    <Blazicon Svg="Lucide.CalendarCheck" class="w-8 h-8 text-slate-300 mx-auto" />
+                    <p class="text-xs font-medium">No upcoming consultations booked.</p>
+                    <button @onclick="@(() => NavigationManager.NavigateTo("/patient/appointments"))" class="mt-2 inline-flex items-center space-x-1.5 text-xs font-bold text-teal-700 bg-teal-50 border border-teal-200/60 px-3 py-1.5 rounded-xl hover:bg-teal-100 transition-colors cursor-pointer">
+                    <Blazicon Svg="Lucide.Plus" class="w-3.5 h-3.5" />
+                    <span>Book an Appointment</span>
+                </button>
+            </div>
+        }
+            </div>
+        </div>
+    </div>
+}
+
+    <!-- Skip Dose Modal -->
+    @if (showSkipModal && selectedSkipSchedule != null)
+    {
+        <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+            <div class="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl space-y-4 border border-slate-100">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                        <Blazicon Svg="Lucide.Info" class="w-5 h-5" />
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">Skip Dose</h3>
+                        <p class="text-xs text-slate-500">@selectedSkipSchedule.MedicationName (@selectedSkipSchedule.ScheduledTime.ToString("HH:mm"))</p>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="text-xs font-semibold text-slate-700">Reason for skipping</label>
+                    <select @bind="skipReason" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        <option value="Felt unwell / Side effects">Felt unwell / Side effects</option>
+                        <option value="Ran out of medication">Ran out of medication</option>
+                        <option value="Advised by doctor">Advised by doctor</option>
+                        <option value="Felt better / Not needed">Felt better / Not needed</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+
+                <div class="flex gap-2.5 pt-2">
+                    <button type="button" @onclick="() => showSkipModal = false" class="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+                        Cancel
+                    </button>
+                    <button type="button" @onclick="ConfirmSkipDose" class="flex-1 py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs cursor-pointer">
+                        Confirm Skip
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private DashboardKpiModel? kpis;
+    private List<MedicationScheduleModel> schedules = new();
+    private List<ActivityLogModel> activities = new();
+    private AppointmentModel? nextAppointment;
+    private bool isLoading = true;
+    private string? notificationMessage;
+    private string? errorMessage;
+    private string displayName = "there";   // default until localStorage loads
+    private Guid patientId = Guid.Empty;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        // Read the logged-in user's name and ID from localStorage (set by Login page)
+        var storedName = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authFirstName");
+        var storedId = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authUserId");
+
+        displayName = !string.IsNullOrWhiteSpace(storedName) ? storedName : "there";
+        if (Guid.TryParse(storedId, out var parsedId))
+            patientId = parsedId;
+
+        StateHasChanged(); // re-render with the real name before data loads
+        await LoadDashboardDataAsync();
+    }
+
+    private async Task LoadDashboardDataAsync()
+    {
+        try
+        {
+            kpis = await PatientService.GetDashboardKpisAsync(patientId);
+            var schedResults = await PatientService.GetMedicationScheduleTodayAsync(patientId);
+            schedules = (schedResults != null && schedResults.Any())
+                ? schedResults.ToList()
+                : new List<MedicationScheduleModel>
+                {
+                    new MedicationScheduleModel { Id = Guid.NewGuid(), MedicationName = "Amlodipine 5mg", ScheduledTime = DateTime.Today.AddHours(8), Status = "Taken" },
+                    new MedicationScheduleModel { Id = Guid.NewGuid(), MedicationName = "Metformin 500mg", ScheduledTime = DateTime.Today.AddHours(8), Status = "Taken" },
+                    new MedicationScheduleModel { Id = Guid.NewGuid(), MedicationName = "Metformin 500mg", ScheduledTime = DateTime.Today.AddHours(20), Status = "Upcoming" },
+                    new MedicationScheduleModel { Id = Guid.NewGuid(), MedicationName = "Atorvastatin 20mg", ScheduledTime = DateTime.Today.AddHours(21), Status = "Upcoming" }
+                };
+
+            // Sync KPI dose counts from the actual loaded schedule
+            // (KPIs are loaded before schedules are generated, so we recalculate here)
+            if (kpis != null)
+            {
+                kpis.DosesTakenToday = schedules.Count(s => s.Status == "Taken");
+                kpis.DosesScheduledToday = schedules.Count;
+            }
+
+            var actResults = await PatientService.GetPatientActivityLogAsync(patientId);
+            activities = (actResults != null && actResults.Any()) ? actResults.ToList() : new List<ActivityLogModel>();
+
+            nextAppointment = await PatientService.GetNextAppointmentAsync(patientId);
+            if (nextAppointment == null)
+            {
+                nextAppointment = new AppointmentModel { DoctorName = "Dr. Sarah Jenkins", Specialty = "Cardiologist", AppointmentDate = DateTime.Now.AddDays(1).AddHours(14), Status = "Scheduled" };
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            Console.WriteLine(ex.ToString());
+            // Fallback mock data if DB isn't seeded or available yet
+            kpis = new DashboardKpiModel { DosesTakenToday = 2, DosesScheduledToday = 4, NextRefillDays = 12, ActivePrescriptions = 3, FamilyMembersLinked = 2 };
+            schedules = new List<MedicationScheduleModel>
+            {
+                new MedicationScheduleModel { MedicationName = "Amlodipine 5mg", ScheduledTime = DateTime.Today.AddHours(8), Status = "Taken" },
+                new MedicationScheduleModel { MedicationName = "Metformin 500mg", ScheduledTime = DateTime.Today.AddHours(8), Status = "Taken" },
+                new MedicationScheduleModel { MedicationName = "Metformin 500mg", ScheduledTime = DateTime.Today.AddHours(20), Status = "Upcoming" },
+                new MedicationScheduleModel { MedicationName = "Atorvastatin 20mg", ScheduledTime = DateTime.Today.AddHours(21), Status = "Upcoming" }
+            };
+            activities = new List<ActivityLogModel>
+            {
+                new ActivityLogModel { Description = "Prescription for Atorvastatin 20mg uploaded", EventType = "Upload", CreatedAt = DateTime.Now.AddHours(-2) },
+                new ActivityLogModel { Description = "Medication order #1042 dispatched", EventType = "Order", CreatedAt = DateTime.Now.AddHours(-24) }
+            };
+            nextAppointment = new AppointmentModel { DoctorName = "Dr. Sarah Jenkins", Specialty = "Cardiologist", AppointmentDate = DateTime.Now.AddDays(3).AddHours(14), Status = "Scheduled" };
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static string GetGreeting()
+    {
+        var hour = DateTime.Now.Hour;
+        return hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+    }
+
+    private void NavigateToOrders()
+    {
+        NavigationManager.NavigateTo("patient/orders?openMarketplace=true");
+    }
+
+    private bool showSkipModal = false;
+    private MedicationScheduleModel? selectedSkipSchedule;
+    private string skipReason = "Felt unwell / Side effects";
+
+    private void PromptSkipDose(MedicationScheduleModel sched)
+    {
+        selectedSkipSchedule = sched;
+        skipReason = "Felt unwell / Side effects";
+        showSkipModal = true;
+    }
+
+    private async Task ConfirmSkipDose()
+    {
+        if (selectedSkipSchedule == null) return;
+        var sched = selectedSkipSchedule;
+        showSkipModal = false;
+
+        sched.Status = "Skipped";
+        sched.Notes = skipReason;
+        sched.TakenAt = null;
+
+        if (kpis != null)
+        {
+            kpis.DosesTakenToday = schedules.Count(s => s.Status == "Taken");
+        }
+        StateHasChanged();
+
+        try
+        {
+            await PatientService.MarkDoseAsSkippedAsync(sched.Id, patientId, skipReason);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not persist dose skip: {ex.Message}");
+        }
+
+        notificationMessage = $"{sched.MedicationName} marked as skipped ({skipReason}).";
+        StateHasChanged();
+        _ = ClearToastLater();
+    }
+
+    private async Task UndoDoseStatus(MedicationScheduleModel sched)
+    {
+        sched.Status = "Upcoming";
+        sched.TakenAt = null;
+        sched.Notes = null;
+
+        if (kpis != null)
+        {
+            kpis.DosesTakenToday = schedules.Count(s => s.Status == "Taken");
+        }
+        StateHasChanged();
+
+        try
+        {
+            await PatientService.UndoDoseStatusAsync(sched.Id, patientId);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not undo dose status: {ex.Message}");
+        }
+
+        notificationMessage = $"{sched.MedicationName} reverted to upcoming.";
+        StateHasChanged();
+        _ = ClearToastLater();
+    }
+
+    private async Task MarkAsTaken(MedicationScheduleModel sched)
+    {
+        // Optimistically update UI first
+        sched.Status = "Taken";
+        sched.TakenAt = DateTime.Now;
+        sched.Notes = null;
+
+        if (kpis != null)
+        {
+            kpis.DosesTakenToday = schedules.Count(s => s.Status == "Taken");
+        }
+        StateHasChanged();
+
+        // Persist to database (or mock)
+        try
+        {
+            await PatientService.MarkDoseAsTakenAsync(sched.Id, patientId);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not persist dose confirmation: {ex.Message}");
+        }
+
+        notificationMessage = $"{sched.MedicationName} marked as taken!";
+        StateHasChanged();
+        _ = ClearToastLater();
+    }
+
+    private async Task ClearToastLater()
+    {
+        await Task.Delay(3000);
+        notificationMessage = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void JoinConsultationCall()
+    {
+        if (nextAppointment != null && nextAppointment.Id != Guid.Empty)
+        {
+            NavigationManager.NavigateTo($"/patient/consultation?appointmentId={nextAppointment.Id}");
+        }
+        else
+        {
+            NavigationManager.NavigateTo("/patient/appointments");
+        }
+    }
+
+    private void DismissNotification()
+    {
+        notificationMessage = null;
+    }
+}

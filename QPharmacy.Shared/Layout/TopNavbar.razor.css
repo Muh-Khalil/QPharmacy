@@ -1,0 +1,11 @@
+/* Hamburger button: visible on mobile only, hidden on tablet and desktop */
+.mobile-menu-btn {
+    display: flex;
+    align-items: center;
+}
+
+@media (min-width: 768px) {
+    .mobile-menu-btn {
+        display: none !important;
+    }
+}

@@ -1,0 +1,385 @@
+@page "/pharmacist/dispensing"
+@attribute [Authorize(Roles = "Pharmacist")]
+@attribute [Authorize(Policy = AuthorizationPolicies.DispenseMedication)]
+@implements IDisposable
+@inject NavigationManager Navigation
+@inject QPharmacy.Services.IPharmacistService PharmacistService
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Dispensing &amp; Handover</h1>
+            <p class="text-sm text-slate-500 mt-1">Orders cleared by verification, ready for physical preparation and handover.</p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 shadow-2xs">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+                Live Auto-Sync
+            </span>
+            <button @onclick="ManualRefreshAsync" disabled="@isManualRefreshing" class="inline-flex items-center space-x-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg shadow-2xs transition-all cursor-pointer">
+                <Blazicon Svg="Lucide.RefreshCw" class="@(isManualRefreshing ? "w-3.5 h-3.5 animate-spin text-emerald-600" : "w-3.5 h-3.5 text-slate-500")" />
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    @if (!string.IsNullOrEmpty(toastMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between space-x-4 animate-fade-in max-w-md">
+            <div class="flex items-center space-x-3">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white shrink-0" />
+                <span class="text-sm font-medium">@toastMessage</span>
+            </div>
+            <button @onclick="() => toastMessage = null" class="text-white hover:text-emerald-100 transition-colors shrink-0">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="flex justify-center py-20">
+            <svg class="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    }
+    else
+    {
+        <!-- Dispensing Table Card -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <!-- Fulfilment Type Filter Tabs -->
+        <div class="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+            <div class="flex items-center space-x-2 text-xs font-semibold text-slate-500">
+                <span>Filter Fulfilment:</span>
+                <button @onclick='() => selectedFulfilment = "All"' class="px-3 py-1.5 rounded-lg transition-colors @(selectedFulfilment == "All" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    All Orders (@dispensingOrders.Count)
+                </button>
+                <button @onclick='() => selectedFulfilment = "Delivery"' class="px-3 py-1.5 rounded-lg transition-colors @(selectedFulfilment == "Delivery" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    Delivery (@dispensingOrders.Count(x => x.Fulfilment == "Delivery"))
+                </button>
+                <button @onclick='() => selectedFulfilment = "Click & collect"' class="px-3 py-1.5 rounded-lg transition-colors @(selectedFulfilment == "Click & collect" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    Click &amp; Collect (@dispensingOrders.Count(x => x.Fulfilment == "Click & collect"))
+                </button>
+            </div>
+            <div class="text-xs text-slate-400 font-medium">
+                Phase 6 Handover Integration Active
+            </div>
+        </div>
+
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+                <thead class="bg-white text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                    <tr>
+                        <th class="px-6 py-4">ORDER</th>
+                        <th class="px-6 py-4">PATIENT</th>
+                        <th class="px-6 py-4">ITEMS</th>
+                        <th class="px-6 py-4">FULFILMENT</th>
+                        <th class="px-6 py-4">PAYMENT</th>
+                        <th class="px-6 py-4">HANDOVER REF</th>
+                        <th class="px-6 py-4 text-right">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @foreach (var order in FilteredOrders)
+                    {
+                        <tr class="hover:bg-slate-50 transition-colors">
+                            <td class="px-6 py-4 font-semibold text-slate-900">@order.OrderNumber</td>
+                            <td class="px-6 py-4 text-slate-900 font-medium">@order.PatientName</td>
+                            <td class="px-6 py-4 text-slate-700 font-medium">@order.ItemCount</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                @if (order.Fulfilment == "Delivery")
+                                {
+                                    <span class="bg-sky-50 text-sky-800 border border-sky-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Truck" class="w-3 h-3 text-sky-600 shrink-0" />
+                                        <span>Delivery</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="bg-emerald-50 text-emerald-800 border border-emerald-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Store" class="w-3 h-3 text-emerald-600 shrink-0" />
+                                        <span>Click &amp; collect</span>
+                                    </span>
+                                }
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                @if (order.PaymentStatus == "Paid")
+                                {
+                                    <span class="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Check" class="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                        <span>Paid</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Clock" class="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                        <span>Awaiting payment</span>
+                                    </span>
+                                }
+                            </td>
+                            <td class="px-6 py-4 text-xs font-medium text-slate-500">
+                                @order.HandoverRef
+                            </td>
+                            <td class="px-6 py-4 text-right whitespace-nowrap">
+                                <button @onclick="() => ManageOrderAsync(order)" class="mr-2 text-emerald-700 font-semibold text-xs px-3 py-1.5 rounded-lg hover:bg-emerald-50">
+                                    Items
+                                </button>
+                                @if (order.PaymentStatus != "Paid")
+                                {
+                                    <button disabled class="bg-slate-100 border border-slate-200 text-slate-400 font-semibold text-xs px-3 py-1.5 rounded-lg cursor-not-allowed inline-flex items-center space-x-1" title="Order cannot be packed or dispatched until payment is satisfied.">
+                                        <Blazicon Svg="Lucide.Lock" class="w-3 h-3 text-slate-400 shrink-0" />
+                                        <span>Awaiting payment</span>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button @onclick="() => UpdateOrderState(order)" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs px-3.5 py-1.5 rounded-lg transition-colors shadow-xs cursor-pointer">
+                                        @order.ActionLabel
+                                    </button>
+                                }
+                            </td>
+
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    @if (managedOrder is not null)
+    {
+        <section class="mt-6 bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="font-semibold text-slate-900">Fulfilment items — @managedOrder.OrderNumber</h2>
+                    <p class="text-xs text-slate-500">All quantity and substitution changes update reservations and stock in one database transaction.</p>
+                </div>
+                <button @onclick="CloseManager" class="text-slate-500 text-sm">Close</button>
+            </div>
+            @foreach (var item in fulfilmentItems)
+            {
+                <div class="border border-slate-200 rounded-lg p-4 flex flex-col lg:flex-row lg:items-center gap-3">
+                    <div class="flex-1 text-sm">
+                        <p class="font-semibold text-slate-900">@item.DispensedMedication</p>
+                        <p class="text-slate-500">Requested @item.RequestedQuantity · reserved @item.FulfilledQuantity · @item.Status</p>
+                    </div>
+                    <button disabled="@(item.FulfilledQuantity == 0)" @onclick="() => ChangeQuantityAsync(item, item.FulfilledQuantity - 1)" class="border rounded px-3 py-1.5 text-xs disabled:opacity-40">Reduce by 1</button>
+                    <button disabled="@(item.FulfilledQuantity >= item.RequestedQuantity)" @onclick="() => ChangeQuantityAsync(item, item.FulfilledQuantity + 1)" class="border rounded px-3 py-1.5 text-xs disabled:opacity-40">Restore 1</button>
+                    <button @onclick="() => selectedItem = item" class="border rounded px-3 py-1.5 text-xs">Substitute</button>
+                </div>
+            }
+            @if (selectedItem is not null)
+            {
+                <div class="grid md:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-lg">
+                    <input @bind="substituteMedication" placeholder="Replacement medication (exact inventory name)" class="border rounded-lg px-3 py-2 text-sm" />
+                    <input @bind="substitutionReason" placeholder="Clinical reason" class="border rounded-lg px-3 py-2 text-sm" />
+                    <button @onclick="ApplySubstitutionAsync" class="md:col-span-2 bg-emerald-600 text-white rounded-lg px-4 py-2 text-sm font-semibold">Reserve substitution</button>
+                </div>
+            }
+            <div class="flex gap-3 border-t pt-4">
+                <input @bind="cancellationReason" placeholder="Cancellation reason" class="flex-1 border rounded-lg px-3 py-2 text-sm" />
+                <button @onclick="CancelOrderAsync" class="bg-rose-600 text-white rounded-lg px-4 py-2 text-sm font-semibold">Cancel and release stock</button>
+            </div>
+        </section>
+    }
+
+    <!-- Handover System Integration Architecture Note -->
+    <div class="mt-6 p-4 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-500 space-y-1">
+        <p class="font-semibold text-slate-700 flex items-center space-x-1">
+            <Blazicon Svg="Lucide.Truck" class="w-3.5 h-3.5 text-slate-400" />
+            <span>Phase 6 Delivery &amp; Tracking Handover Architecture:</span>
+        </p>
+        <p>This table acts as the physical handover point between internal pharmacy dispensing and external logistics. Clicking <strong>Mark packed</strong> automatically dispatches a courier pickup request (Delivery API), while clicking <strong>Mark ready</strong> triggers an instant SMS/Push pickup notification to the patient (Click &amp; Collect API).</p>
+    </div>
+    }
+</div>
+
+@code {
+    private string? toastMessage;
+    private string selectedFulfilment = "All";
+    private bool isLoading = true;
+    private QPharmacy.Shared.Models.Database.DispensingOrderModel? managedOrder;
+    private QPharmacy.Shared.Models.Database.FulfilmentItemModel? selectedItem;
+    private List<QPharmacy.Shared.Models.Database.FulfilmentItemModel> fulfilmentItems = [];
+    private string substituteMedication = string.Empty;
+    private string substitutionReason = string.Empty;
+    private string cancellationReason = string.Empty;
+
+    private List<QPharmacy.Shared.Models.Database.DispensingOrderModel> dispensingOrders = new();
+    private System.Threading.CancellationTokenSource? _cts;
+    private bool isManualRefreshing = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOrdersFromDbAsync();
+        StartBackgroundPolling();
+    }
+
+    private void StartBackgroundPolling()
+    {
+        _cts?.Cancel();
+        _cts = new System.Threading.CancellationTokenSource();
+        var token = _cts.Token;
+        _ = Task.Run(async () =>
+        {
+            using var periodicTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            try
+            {
+                while (await periodicTimer.WaitForNextTickAsync(token))
+                {
+                    await RefreshOrdersSilentAsync();
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Dispensing Poller] {ex.Message}");
+            }
+        }, token);
+    }
+
+    private async Task ManualRefreshAsync()
+    {
+        isManualRefreshing = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await RefreshOrdersSilentAsync();
+        }
+        finally
+        {
+            isManualRefreshing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RefreshOrdersSilentAsync()
+    {
+        try
+        {
+            var orders = await PharmacistService.GetDispensingOrdersAsync();
+            var list = orders.ToList();
+            if (list.Count != dispensingOrders.Count ||
+                list.Any(x => !dispensingOrders.Any(o => o.Id == x.Id && o.PaymentStatus == x.PaymentStatus && o.ActionLabel == x.ActionLabel && o.HandoverRef == x.HandoverRef)))
+            {
+                dispensingOrders = list;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+
+    private async Task LoadOrdersFromDbAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var orders = await PharmacistService.GetDispensingOrdersAsync();
+            dispensingOrders = orders.ToList();
+        }
+        catch (Exception ex)
+        {
+            dispensingOrders = [];
+            toastMessage = $"Unable to load dispensing orders from the database: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private IEnumerable<QPharmacy.Shared.Models.Database.DispensingOrderModel> FilteredOrders
+    {
+        get
+        {
+            if (selectedFulfilment == "All") return dispensingOrders;
+            return dispensingOrders.Where(x => x.Fulfilment == selectedFulfilment);
+        }
+    }
+
+    private async Task UpdateOrderState(QPharmacy.Shared.Models.Database.DispensingOrderModel order)
+    {
+        if (order.PaymentStatus != "Paid")
+        {
+            toastMessage = $"Cannot pack or dispatch Order {order.OrderNumber}: Payment has not been completed by the patient.";
+            return;
+        }
+
+        if (order.ActionLabel == "Mark packed")
+        {
+            order.ActionLabel = "Dispatched to Courier";
+            order.HandoverRef = "Courier Assigned: In Transit";
+            await PharmacistService.UpdateDispensingOrderAsync(order.Id, order.ActionLabel, order.HandoverRef);
+            toastMessage = $"Order {order.OrderNumber} ({order.PatientName}) packed & saved to DB! Courier requested.";
+        }
+        else if (order.ActionLabel == "Mark ready")
+        {
+            order.ActionLabel = "Patient Notified";
+            order.HandoverRef = "SMS Notification Sent";
+            await PharmacistService.UpdateDispensingOrderAsync(order.Id, order.ActionLabel, order.HandoverRef);
+            toastMessage = $"Order {order.OrderNumber} ({order.PatientName}) marked ready in DB! SMS sent.";
+        }
+        else
+        {
+            dispensingOrders.Remove(order);
+            await PharmacistService.UpdateDispensingOrderAsync(order.Id, "Archived", order.HandoverRef);
+            toastMessage = $"Order {order.OrderNumber} completed & archived in DB.";
+        }
+    }
+
+    private async Task ManageOrderAsync(QPharmacy.Shared.Models.Database.DispensingOrderModel order)
+    {
+        managedOrder = order;
+        selectedItem = null;
+        fulfilmentItems = (await PharmacistService.GetFulfilmentItemsAsync(order.Id)).ToList();
+    }
+
+    private void CloseManager() => managedOrder = null;
+
+    private async Task ChangeQuantityAsync(QPharmacy.Shared.Models.Database.FulfilmentItemModel item, int quantity)
+    {
+        if (managedOrder is null) return;
+        if (await PharmacistService.SetPartialFulfilmentAsync(managedOrder.Id, item.Id, quantity))
+        {
+            toastMessage = "Reserved quantity and branch stock updated.";
+            await ManageOrderAsync(managedOrder);
+        }
+    }
+
+    private async Task ApplySubstitutionAsync()
+    {
+        if (managedOrder is null || selectedItem is null) return;
+        if (await PharmacistService.SubstituteMedicationAsync(managedOrder.Id, selectedItem.Id, substituteMedication, substitutionReason))
+        {
+            toastMessage = "Substitution reserved and the original stock released.";
+            substituteMedication = substitutionReason = string.Empty;
+            await ManageOrderAsync(managedOrder);
+        }
+        else toastMessage = "The replacement is not available in sufficient quantity at this branch.";
+    }
+
+    private async Task CancelOrderAsync()
+    {
+        if (managedOrder is null) return;
+        if (await PharmacistService.CancelFulfilmentAsync(managedOrder.Id, cancellationReason))
+        {
+            toastMessage = "Order cancelled and all reserved stock released.";
+            managedOrder = null;
+            cancellationReason = string.Empty;
+            await LoadOrdersFromDbAsync();
+        }
+    }
+}

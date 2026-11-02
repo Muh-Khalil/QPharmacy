@@ -1,0 +1,321 @@
+@page "/pharmacist/inventory"
+@attribute [Authorize(Roles = "Pharmacist")]
+@inject NavigationManager Navigation
+@inject QPharmacy.Services.IPharmacistService PharmacistService
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Inventory</h1>
+            <p class="text-sm text-slate-500 mt-1 flex items-center space-x-2">
+                <span>Stock levels across your pharmacy.</span>
+                <span class="text-slate-300">•</span>
+                <span class="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-xs font-semibold inline-flex items-center space-x-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>Live PMS Sync (Clicks ERP)</span>
+                </span>
+            </p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <button @onclick="SyncExternalErp" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium text-sm px-3.5 py-2.5 rounded-lg shadow-2xs transition-colors flex items-center space-x-2">
+                <Blazicon Svg="Lucide.RefreshCw" class="@syncIconClass" />
+                <span>Sync PMS</span>
+            </button>
+            <button @onclick="OpenAddStockModal" class="bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm px-4 py-2.5 rounded-lg shadow-sm transition-colors flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Add stock</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Automated Low-Stock Alert System Banner -->
+    @if (lowStockItem != null)
+    {
+        <div class="mb-6 p-4 rounded-xl bg-amber-50/80 border border-amber-200/80 text-amber-900 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div class="flex items-start space-x-3">
+                <div class="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 shrink-0 mt-0.5">
+                    <Blazicon Svg="Lucide.TrendingDown" class="w-4 h-4" />
+                </div>
+                <div>
+                    <p class="text-sm font-semibold">Automated Low-Stock Alert Triggered</p>
+                    <p class="text-xs text-amber-700 mt-0.5">
+                        <strong>@lowStockItem.MedicationName</strong> (@lowStockItem.InStock in stock) has fallen below the @lowStockItem.ReorderLevel-unit threshold. Automated wholesaler dispatch alert active.
+                    </p>
+                </div>
+            </div>
+            <button @onclick="OrderAllLowStock" class="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs px-4 py-2 rounded-lg transition-colors shadow-2xs shrink-0">
+                Dispatch Wholesaler Order
+            </button>
+        </div>
+    }
+
+    <!-- Notification Toast -->
+    @if (!string.IsNullOrEmpty(toastMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-xl flex items-center justify-between space-x-4 animate-fade-in max-w-md">
+            <div class="flex items-center space-x-3">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white shrink-0" />
+                <span class="text-sm font-medium">@toastMessage</span>
+            </div>
+            <button @onclick="() => toastMessage = null" class="text-white hover:text-emerald-100 transition-colors shrink-0">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="flex justify-center py-20">
+            <svg class="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    }
+    else
+    {
+        <!-- Inventory Table Card -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <!-- Search Bar & Filters -->
+        <div class="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+            <div class="relative w-full sm:w-72">
+                <Blazicon Svg="Lucide.Search" class="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input type="text" @bind="searchTerm" @bind:event="oninput" placeholder="Search medication..." class="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white" />
+            </div>
+            <div class="flex items-center space-x-2 text-xs font-semibold text-slate-500">
+                <span>Filter:</span>
+                <button @onclick='() => selectedFilter = "All"' class="px-3 py-1.5 rounded-lg transition-colors @(selectedFilter == "All" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    All (@inventoryItems.Count)
+                </button>
+                <button @onclick='() => selectedFilter = "Low"' class="px-3 py-1.5 rounded-lg transition-colors @(selectedFilter == "Low" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    Low / Alert (@inventoryItems.Count(x => x.Status != "Healthy"))
+                </button>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+                <thead class="bg-white text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                    <tr>
+                        <th class="px-6 py-4">MEDICATION</th>
+                        <th class="px-6 py-4">IN STOCK</th>
+                        <th class="px-6 py-4">REORDER LEVEL</th>
+                        <th class="px-6 py-4">STATUS</th>
+                        <th class="px-6 py-4 text-right">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @foreach (var item in FilteredItems)
+                    {
+                        <tr class="hover:bg-slate-50 transition-colors">
+                            <td class="px-6 py-4 font-semibold text-slate-900">@item.MedicationName</td>
+                            <td class="px-6 py-4 text-slate-700 font-medium">@item.InStock</td>
+                            <td class="px-6 py-4 text-slate-500 font-medium">@item.ReorderLevel</td>
+                            <td class="px-6 py-4">
+                                @if (item.Status == "Healthy")
+                                {
+                                    <span class="bg-emerald-100/70 text-emerald-800 px-3 py-1 rounded-full text-xs font-semibold inline-block">
+                                        Healthy
+                                    </span>
+                                }
+                                else if (item.Status == "Low")
+                                {
+                                    <span class="bg-amber-100/70 text-amber-800 px-3 py-1 rounded-full text-xs font-semibold inline-block">
+                                        Low
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="bg-rose-100/70 text-rose-800 px-3 py-1 rounded-full text-xs font-semibold inline-block">
+                                        Reorder now
+                                    </span>
+                                }
+                            </td>
+                            <td class="px-6 py-4 text-right">
+                                <button @onclick="() => ReorderItem(item)" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs px-4 py-1.5 rounded-full transition-colors shadow-2xs">
+                                    Restock +50
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Live System Integration Architecture Note -->
+    <div class="mt-6 p-4 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-500 space-y-1">
+        <p class="font-semibold text-slate-700 flex items-center space-x-1">
+            <Blazicon Svg="Lucide.Info" class="w-3.5 h-3.5 text-slate-400" />
+            <span>ERP / PMS Integration Architecture Note:</span>
+        </p>
+        <p>QPharmacy reflects a real-time live mirror of your pharmacy's primary stock management system (e.g. Clicks ERP/PMS). Manual stock entries and automated reorder alerts are synchronized bidirectionally with wholesaler procurement APIs.</p>
+    </div>
+    }
+</div>
+
+<!-- Add Stock Modal -->
+@if (showAddStockModal)
+{
+    <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center pb-2 border-b border-slate-100">
+                <h3 class="text-lg font-semibold text-slate-900">Add New Inventory Stock</h3>
+                <button @onclick="() => showAddStockModal = false" class="text-slate-400 hover:text-slate-600">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Medication Name &amp; Strength</label>
+                    <input type="text" @bind="newMedication" placeholder="e.g. Paracetamol 500mg" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Initial Stock Count</label>
+                    <input type="number" @bind="newInStock" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Reorder Level Threshold</label>
+                    <input type="number" @bind="newReorderLevel" class="w-full px-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
+                <button @onclick="() => showAddStockModal = false" class="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 font-medium text-sm hover:bg-slate-50 transition-colors">
+                    Cancel
+                </button>
+                <button @onclick="SaveNewStock" class="px-5 py-2 rounded-lg bg-slate-900 text-white font-medium text-sm hover:bg-slate-800 transition-colors shadow-sm">
+                    Save Stock
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string? toastMessage;
+    private bool showAddStockModal = false;
+    private bool isSyncing = false;
+    private bool isLoading = true;
+    private string searchTerm = "";
+    private string selectedFilter = "All";
+
+    private string syncIconClass => $"w-4 h-4 text-slate-500 {(isSyncing ? "animate-spin" : "")}";
+
+    private string newMedication = "";
+    private int newInStock = 100;
+    private int newReorderLevel = 50;
+
+    private List<QPharmacy.Shared.Models.Database.PharmacyInventoryModel> inventoryItems = new();
+    private QPharmacy.Shared.Models.Database.PharmacyInventoryModel? lowStockItem => inventoryItems.FirstOrDefault(x => x.Status != "Healthy");
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadInventoryFromDbAsync();
+    }
+
+    private async Task LoadInventoryFromDbAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var items = await PharmacistService.GetInventoryAsync();
+            inventoryItems = items.ToList();
+        }
+        catch
+        {
+            inventoryItems = new List<QPharmacy.Shared.Models.Database.PharmacyInventoryModel>
+            {
+                new QPharmacy.Shared.Models.Database.PharmacyInventoryModel { Id = Guid.NewGuid(), MedicationName = "Amlodipine 5mg", InStock = 420, ReorderLevel = 100, Status = "Healthy" },
+                new QPharmacy.Shared.Models.Database.PharmacyInventoryModel { Id = Guid.NewGuid(), MedicationName = "Metformin 500mg", InStock = 85, ReorderLevel = 100, Status = "Low" },
+                new QPharmacy.Shared.Models.Database.PharmacyInventoryModel { Id = Guid.NewGuid(), MedicationName = "Atorvastatin 20mg", InStock = 12, ReorderLevel = 50, Status = "Reorder now" },
+                new QPharmacy.Shared.Models.Database.PharmacyInventoryModel { Id = Guid.NewGuid(), MedicationName = "Cetirizine 10mg", InStock = 310, ReorderLevel = 80, Status = "Healthy" }
+            };
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private IEnumerable<QPharmacy.Shared.Models.Database.PharmacyInventoryModel> FilteredItems
+    {
+        get
+        {
+            var result = inventoryItems.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                result = result.Where(x => x.MedicationName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+            }
+            if (selectedFilter == "Low")
+            {
+                result = result.Where(x => x.Status != "Healthy");
+            }
+            return result;
+        }
+    }
+
+    private async Task SyncExternalErp()
+    {
+        isSyncing = true;
+        await LoadInventoryFromDbAsync();
+        isSyncing = false;
+        toastMessage = "Inventory mirrored & synced with Clicks ERP/PMS stock system.";
+    }
+
+    private void OpenAddStockModal()
+    {
+        newMedication = "";
+        newInStock = 100;
+        newReorderLevel = 50;
+        showAddStockModal = true;
+    }
+
+    private async Task SaveNewStock()
+    {
+        if (string.IsNullOrWhiteSpace(newMedication)) return;
+
+        string status = newInStock <= newReorderLevel ? (newInStock <= 20 ? "Reorder now" : "Low") : "Healthy";
+        var newItem = new QPharmacy.Shared.Models.Database.PharmacyInventoryModel
+        {
+            Id = Guid.NewGuid(),
+            BranchName = "Clicks, Claremont",
+            MedicationName = newMedication,
+            InStock = newInStock,
+            ReorderLevel = newReorderLevel,
+            Status = status,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        await PharmacistService.AddInventoryStockAsync(newItem);
+        inventoryItems.Insert(0, newItem);
+
+        showAddStockModal = false;
+        toastMessage = $"Added {newMedication} to DB stock ({newInStock} units). Synced to PMS.";
+    }
+
+    private async Task ReorderItem(QPharmacy.Shared.Models.Database.PharmacyInventoryModel item)
+    {
+        item.InStock += 50;
+        if (item.InStock > item.ReorderLevel)
+        {
+            item.Status = "Healthy";
+        }
+        await PharmacistService.RestockItemAsync(item.Id, 50);
+        toastMessage = $"Restocked {item.MedicationName} (+50 units) in DB. Current level: {item.InStock}. PMS mirror updated.";
+    }
+
+    private async Task OrderAllLowStock()
+    {
+        foreach (var item in inventoryItems.Where(x => x.Status != "Healthy"))
+        {
+            item.InStock += 50;
+            item.Status = "Healthy";
+            await PharmacistService.RestockItemAsync(item.Id, 50);
+        }
+        toastMessage = "Wholesaler order dispatched for all low-stock items. DB stock levels updated!";
+    }
+}

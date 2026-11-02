@@ -1,0 +1,268 @@
+@page "/admin/logs"
+@attribute [Authorize(Roles = "Admin")]
+@attribute [Authorize(Policy = AuthorizationPolicies.ViewAuditLogs)]
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@inject NavigationManager Navigation
+@inject IAdminService AdminService
+@inject IJSRuntime JSRuntime
+
+<script src="_content/QPharmacy.Shared/js/adminExport.js"></script>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Header Context -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">System Audit &amp; Activity Logs</h1>
+            <p class="text-sm text-slate-500 mt-1">Platform-wide operational events, security access checks, and integration triggers.</p>
+        </div>
+        <div class="flex items-center space-x-2">
+            <button @onclick="ExportLogs" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium text-sm px-3.5 py-2.5 rounded-lg shadow-2xs transition-colors flex items-center space-x-2 cursor-pointer">
+                <Blazicon Svg="Lucide.Download" class="w-4 h-4 text-slate-500" />
+                <span>Export Logs</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    @if (!string.IsNullOrEmpty(toastMessage))
+    {
+        <div class="mb-6 p-4 rounded-xl flex items-center justify-between bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-sm animate-fade-in">
+            <div class="flex items-center space-x-3">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-emerald-600" />
+                <span class="font-medium text-sm">@toastMessage</span>
+            </div>
+            <button @onclick="() => toastMessage = null" class="text-emerald-500 hover:text-emerald-700 cursor-pointer">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="flex justify-center py-20">
+            <svg class="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    }
+    else
+    {
+        <!-- Audit Logs Table Card -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <!-- Search Bar & Filters -->
+        <div class="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+            <div class="relative w-full sm:w-72">
+                <Blazicon Svg="Lucide.Search" class="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input type="text" value="@searchTerm" @oninput="OnSearchChanged" placeholder="Search event logs..." class="w-full pl-9 pr-4 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white" />
+            </div>
+            <div class="flex items-center space-x-2 text-xs font-semibold text-slate-500 overflow-x-auto">
+                <span>Category:</span>
+                <button @onclick='() => SelectCategory("All")' class="px-3 py-1.5 rounded-lg transition-colors cursor-pointer @(selectedCategory == "All" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    All (@logsList.Count)
+                </button>
+                <button @onclick='() => SelectCategory("Security")' class="px-3 py-1.5 rounded-lg transition-colors cursor-pointer @(selectedCategory == "Security" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    Security &amp; RBAC
+                </button>
+                <button @onclick='() => SelectCategory("Integrations")' class="px-3 py-1.5 rounded-lg transition-colors cursor-pointer @(selectedCategory == "Integrations" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    Integrations
+                </button>
+                <button @onclick='() => SelectCategory("System")' class="px-3 py-1.5 rounded-lg transition-colors cursor-pointer @(selectedCategory == "System" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100")">
+                    System
+                </button>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+                <thead class="bg-white text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                    <tr>
+                        <th class="px-6 py-4">TIMESTAMP</th>
+                        <th class="px-6 py-4">EVENT TYPE</th>
+                        <th class="px-6 py-4">USER / ACTOR</th>
+                        <th class="px-6 py-4">DETAILS</th>
+                        <th class="px-6 py-4">STATUS</th>
+                        <th class="px-6 py-4 text-right">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @if (logsList == null || !logsList.Any())
+                    {
+                        <tr>
+                            <td colspan="6" class="px-6 py-8 text-center text-slate-400">
+                                No audit events found matching criteria.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var log in logsList)
+                        {
+                            <tr class="hover:bg-slate-50 transition-colors">
+                                <td class="px-6 py-4 text-slate-500 font-mono text-xs whitespace-nowrap">@log.Timestamp</td>
+                                <td class="px-6 py-4">
+                                    <p class="font-semibold text-slate-900">@log.EventType</p>
+                                    <p class="text-xs text-slate-400">@log.Category</p>
+                                </td>
+                                <td class="px-6 py-4 text-slate-700 font-medium whitespace-nowrap">@log.Actor</td>
+                                <td class="px-6 py-4 text-slate-600">@log.Details</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    @if (log.Status == "Success")
+                                    {
+                                        <span class="bg-emerald-100/80 text-emerald-800 px-3 py-1 rounded-full text-xs font-semibold inline-block">
+                                            Success
+                                        </span>
+                                    }
+                                    else if (log.Status == "Warning")
+                                    {
+                                        <span class="bg-amber-100/80 text-amber-800 px-3 py-1 rounded-full text-xs font-semibold inline-block">
+                                            Warning
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="bg-rose-100/80 text-rose-800 px-3 py-1 rounded-full text-xs font-semibold inline-block">
+                                            Failed
+                                        </span>
+                                    }
+                                </td>
+                                <td class="px-6 py-4 text-right whitespace-nowrap">
+                                    <button @onclick="() => OpenInspectModal(log)" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs px-4 py-1.5 rounded-full transition-colors shadow-2xs cursor-pointer">
+                                        Inspect
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Security & Compliance Note -->
+    <div class="mt-6 p-4 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-500 space-y-1">
+        <p class="font-semibold text-slate-700 flex items-center space-x-1">
+            <Blazicon Svg="Lucide.ShieldCheck" class="w-3.5 h-3.5 text-slate-400" />
+            <span>Immutable Audit Trail Architecture:</span>
+        </p>
+        <p>System events, authentication checks, and integration webhooks are signed and stored in append-only database storage for compliance and security auditing.</p>
+    </div>
+    }
+</div>
+
+<!-- Inspect Log Details Modal -->
+@if (showInspectModal && activeLog != null)
+{
+    <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center pb-2 border-b border-slate-100">
+                <h3 class="text-lg font-semibold text-slate-900">Audit Event Details</h3>
+                <button @onclick="() => showInspectModal = false" class="text-slate-400 hover:text-slate-600 cursor-pointer">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="space-y-4 text-sm">
+                <div class="flex justify-between items-center py-2 border-b border-slate-100">
+                    <span class="text-slate-500">Event Type:</span>
+                    <span class="font-semibold text-slate-900">@activeLog.EventType</span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-slate-100">
+                    <span class="text-slate-500">Timestamp:</span>
+                    <span class="font-mono text-xs text-slate-700">@activeLog.Timestamp</span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-slate-100">
+                    <span class="text-slate-500">Category:</span>
+                    <span class="font-semibold text-slate-700">@activeLog.Category</span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-slate-100">
+                    <span class="text-slate-500">Actor / Trigger:</span>
+                    <span class="font-semibold text-emerald-600">@activeLog.Actor</span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-slate-100">
+                    <span class="text-slate-500">Origin IP:</span>
+                    <span class="font-mono text-xs text-slate-700">@activeLog.OriginIp</span>
+                </div>
+
+                <div>
+                    <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">Payload / Details</span>
+                    <div class="bg-slate-900 text-emerald-400 font-mono text-xs p-3 rounded-lg overflow-x-auto">
+                        @activeLog.Details
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end pt-4 border-t border-slate-100">
+                <button @onclick="() => showInspectModal = false" class="px-5 py-2 rounded-lg bg-slate-900 text-white font-medium text-sm hover:bg-slate-800 transition-colors shadow-sm cursor-pointer">
+                    Close Inspector
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string selectedCategory = "All";
+    private string searchTerm = "";
+    private string? toastMessage;
+    private bool showInspectModal = false;
+    private bool isLoading = true;
+    private AdminAuditLogModel? activeLog;
+
+    private List<AdminAuditLogModel> logsList = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadLogsAsync();
+    }
+
+    private async Task LoadLogsAsync()
+    {
+        isLoading = true;
+        try
+        {
+            logsList = (await AdminService.GetAuditLogsAsync(selectedCategory, searchTerm)).ToList();
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnSearchChanged(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+        await LoadLogsAsync();
+    }
+
+    private async Task SelectCategory(string category)
+    {
+        selectedCategory = category;
+        await LoadLogsAsync();
+    }
+
+    private async Task ExportLogs()
+    {
+        var csvData = await AdminService.ExportAuditLogsCsvAsync(selectedCategory, searchTerm);
+        var filename = $"QPharmacy_AuditLogs_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("adminExport.downloadFileFromText", filename, csvData, "text/csv;charset=utf-8;");
+            toastMessage = $"Successfully exported {logsList.Count} audit events to '{filename}'.";
+        }
+        catch
+        {
+            // Fallback notification if JS interop environment is constrained
+            toastMessage = $"Generated CSV report with {logsList.Count} audit log records.";
+        }
+    }
+
+    private void OpenInspectModal(AdminAuditLogModel log)
+    {
+        activeLog = log;
+        showInspectModal = true;
+    }
+}

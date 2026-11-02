@@ -1,0 +1,614 @@
+@page "/patient/prescriptions"
+@attribute [Authorize(Roles = "Patient")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@implements IDisposable
+@inject IPatientService PatientService
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Prescriptions - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Toast Notification -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between space-x-4">
+            <div class="flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="DismissNotification" class="text-white hover:text-emerald-100 transition-colors">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Prescriptions</h1>
+            <p class="text-sm text-slate-500 mt-1">Upload, track and reorder your prescriptions.</p>
+        </div>
+        <div class="mt-4 sm:mt-0 flex items-center space-x-3">
+            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 shadow-2xs">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+                Live Auto-Sync
+            </span>
+            <button @onclick="ManualRefreshAsync" disabled="@isManualRefreshing" class="inline-flex items-center space-x-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg shadow-2xs transition-all cursor-pointer">
+                <Blazicon Svg="Lucide.RefreshCw" class="@(isManualRefreshing ? "w-3.5 h-3.5 animate-spin text-emerald-600" : "w-3.5 h-3.5 text-slate-500")" />
+                <span>Refresh</span>
+            </button>
+            <button @onclick="ToggleUploadModal" class="bg-brand-dark hover:bg-brand-DEFAULT text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors text-sm flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Upload prescription</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Refill Due Smart Alert Banner -->
+    @if (activePrescriptions.FirstOrDefault(x => x.IsRefillAvailable) is var dueScript && dueScript != null)
+    {
+        <div class="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-900 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex items-center space-x-3">
+                <div class="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+                    <Blazicon Svg="Lucide.Bell" class="w-4.5 h-4.5 text-amber-700" />
+                </div>
+                <div>
+                    <p class="text-sm font-bold text-amber-950">Refill Due Soon &middot; @dueScript.MedicationName</p>
+                    <p class="text-xs text-amber-800 mt-0.5">Your monthly supply is running low (@dueScript.DaysUntilRefill days remaining &bull; Due @dueScript.NextRefillDueDate.ToString("MMM dd")). Click <strong>Reorder</strong> to request your repeat script from @dueScript.PharmacyName.</p>
+                </div>
+            </div>
+            <button @onclick="() => HandleReorder(dueScript)" class="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs px-4 py-2 rounded-lg transition-colors shadow-xs shrink-0 flex items-center space-x-1.5">
+            <Blazicon Svg="Lucide.RefreshCw" class="w-3.5 h-3.5 text-white" />
+            <span>Reorder Refill</span>
+        </button>
+    </div>
+}
+
+<!-- Tabs -->
+<div class="border-b border-slate-200 mb-6">
+    <nav class="-mb-px flex space-x-8">
+        <button @onclick='() => SwitchTab("Active")'
+        class="whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm transition-all @(activeTab == "Active" ? "text-emerald-600 border-emerald-500" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300")">
+        Active (@activePrescriptions.Count)
+    </button>
+    <button @onclick='() => SwitchTab("Pending")'
+    class="whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm transition-all @(activeTab == "Pending" ? "text-emerald-600 border-emerald-500" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300")">
+    Pending verification (@pendingPrescriptions.Count)
+</button>
+<button @onclick='() => SwitchTab("History")'
+class="whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm transition-all @(activeTab == "History" ? "text-emerald-600 border-emerald-500" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300")">
+History (@historyPrescriptions.Count)
+</button>
+</nav>
+</div>
+
+<!-- Table Container -->
+<div class="bg-white shadow-sm rounded-xl border border-slate-200 overflow-hidden">
+    @if (isLoading)
+    {
+        <div class="p-12 text-center text-slate-500">
+            <svg class="animate-spin h-8 w-8 mx-auto text-emerald-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Loading your prescriptions...
+        </div>
+    }
+    else if (!DisplayedPrescriptions.Any())
+    {
+        <div class="p-12 text-center text-slate-500">
+            <Blazicon Svg="Lucide.FileText" class="w-12 h-12 mx-auto text-slate-300 mb-4" />
+            <p class="text-lg font-medium text-slate-900">No prescriptions here</p>
+            <p class="mt-1 text-sm">No @activeTab.ToLower() prescriptions found.</p>
+        </div>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+                <thead class="bg-white text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                    <tr>
+                        <th class="px-6 py-4">MEDICATION</th>
+                        <th class="px-6 py-4">PRESCRIBED BY</th>
+                        <th class="px-6 py-4">PHARMACY</th>
+                        <th class="px-6 py-4">STATUS</th>
+                        <th class="px-6 py-4 text-right">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @foreach (var script in DisplayedPrescriptions)
+                    {
+                        <tr class="hover:bg-slate-50 transition-colors">
+                            <td class="px-6 py-4">
+                                <div class="font-semibold text-slate-900">@script.MedicationName</div>
+                                <div class="text-xs text-slate-500 mt-0.5">@script.Dosage</div>
+                                @if (script.Status == "Verified")
+                                {
+                                    @if (script.IsRefillAvailable)
+                                    {
+                                        <div class="text-[11px] font-medium text-amber-700 mt-1 flex items-start space-x-1.5 leading-tight">
+                                            <Blazicon Svg="Lucide.Clock" class="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                            <span>Refill due in @script.DaysUntilRefill days (@script.NextRefillDueDate.ToString("MMM dd")) &bull; @script.RepeatsRemaining repeats left</span>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="text-[11px] font-medium text-slate-500 mt-1 flex items-start space-x-1.5 leading-tight">
+                                            <Blazicon Svg="Lucide.Calendar" class="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                                            <span>Next refill available @script.NextRefillDueDate.ToString("MMM dd") (Last dispensed @(script.LastDispensedDate?.ToString("MMM dd") ?? "recently"))</span>
+                                        </div>
+                                    }
+                                }
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-slate-700 font-medium">@script.PrescribedBy</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-slate-600">@script.PharmacyName</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                @if (script.Status == "Verified")
+                                {
+                                    <span class="bg-emerald-50 text-emerald-800 border border-emerald-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Check" class="w-3 h-3 text-emerald-600 shrink-0" />
+                                        <span>Verified</span>
+                                    </span>
+                                }
+                                else if (script.Status == "Awaiting pharmacist")
+                                {
+                                    <span class="bg-amber-50 text-amber-800 border border-amber-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Clock" class="w-3 h-3 text-amber-600 shrink-0" />
+                                        <span>Awaiting pharmacist</span>
+                                    </span>
+                                }
+                                else if (script.Status == "Uploaded")
+                                {
+                                    <span class="bg-sky-50 text-sky-800 border border-sky-200/70 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Upload" class="w-3 h-3 text-sky-600 shrink-0" />
+                                        <span>Uploaded</span>
+                                    </span>
+                                }
+                                else if (script.Status == "Expired")
+                                {
+                                    <span class="bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-full text-xs font-semibold inline-flex items-center space-x-1.5">
+                                        <Blazicon Svg="Lucide.Info" class="w-3 h-3 text-slate-400 shrink-0" />
+                                        <span>Expired</span>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full text-xs font-semibold">@script.Status</span>
+                                }
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right">
+                                @if (script.Status == "Verified")
+                                {
+                                    @if (script.IsRefillAvailable)
+                                    {
+                                        <button @onclick="() => HandleReorder(script)" class="bg-slate-900 text-white hover:bg-slate-800 px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition-colors flex items-center space-x-1 ml-auto">
+                                        <Blazicon Svg="Lucide.RefreshCw" class="w-3 h-3" />
+                                        <span>Reorder</span>
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button disabled title="Refill available starting @script.NextRefillDueDate.ToString("MMM dd, yyyy"). Last dispensed on @(script.LastDispensedDate?.ToString("MMM dd, yyyy") ?? "N/A")." class="bg-slate-100 text-slate-400 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium cursor-not-allowed ml-auto">
+                                        Refill locked (@script.DaysUntilRefill d)
+                                    </button>
+                                }
+                            }
+                            else if (script.Status == "Uploaded" || script.Status == "Awaiting pharmacist")
+                            {
+                                <button @onclick="() => HandleView(script)" class="bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm transition-colors">
+                                View
+                            </button>
+                        }
+                        else
+                        {
+                            <button disabled class="bg-slate-50 text-slate-400 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium cursor-not-allowed">
+                                Reorder
+                            </button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+}
+</div>
+
+<!-- Upload Modal -->
+@if (showUploadModal)
+{
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 sm:p-6 animate-fade-in">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center shrink-0 bg-white">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-50 border border-emerald-200/70 flex items-center justify-center text-emerald-700 shadow-2xs">
+                        <Blazicon Svg="Lucide.Upload" class="w-4 h-4" />
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">Upload Prescription</h3>
+                        <p class="text-xs text-slate-500">Submit your script to a verified pharmacy partner</p>
+                    </div>
+                </div>
+                <button @onclick="ToggleUploadModal" class="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg hover:bg-slate-100 cursor-pointer">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <!-- Modal Body (Scrollable) -->
+            <div class="p-6 overflow-y-auto space-y-4 text-left">
+                <!-- 2-col Grid: Medication & Instructions -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Medication Name</label>
+                        <input type="text" @bind="medicationNameInput" placeholder="e.g. Azithromycin 500mg" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Dosage / Instructions</label>
+                        <input type="text" @bind="dosageInput" placeholder="e.g. 1 daily - 30 days" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs" />
+                    </div>
+                </div>
+
+                <!-- 2-col Grid: Prescribed By & Pharmacy -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Prescribed By</label>
+                        <input type="text" @bind="prescribedByInput" placeholder="e.g. Dr Sarah Jenkins" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Preferred Pharmacy Branch</label>
+                        <select @bind="preferredPharmacyInput" class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-2xs">
+                            <option value="Clicks, Claremont">Clicks, Claremont (Primary Partner)</option>
+                            <option value="Dis-Chem, Tokai">Dis-Chem, Tokai</option>
+                            <option value="Clicks, Rondebosch">Clicks, Rondebosch</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- File Dropzone: Compact & Clean -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Upload File (PDF or Image)</label>
+                    <div class="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center hover:bg-slate-50 hover:border-emerald-400 transition-all cursor-pointer bg-slate-50/50">
+                        <Blazicon Svg="Lucide.Upload" class="w-6 h-6 text-slate-400 mx-auto mb-1.5" />
+                        <span class="text-xs font-semibold text-slate-700 block">Click to select file</span>
+                        <span class="text-xs text-slate-400 mt-0.5 block">PDF, JPG, or PNG (Max 5MB)</span>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(modalError))
+                {
+                    <div class="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
+                        @modalError
+                    </div>
+                }
+            </div>
+
+            <!-- Modal Footer (Pinned at bottom) -->
+            <div class="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex space-x-3 shrink-0">
+                <button type="button" @onclick="ToggleUploadModal" class="flex-1 bg-white hover:bg-slate-100 text-slate-700 font-semibold px-4 py-2.5 rounded-xl text-sm border border-slate-200 transition-colors shadow-2xs cursor-pointer">
+                    Cancel
+                </button>
+                <button type="button" @onclick="HandleUploadPrescription" disabled="@isUploading" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold px-4 py-2.5 rounded-xl text-sm transition-colors shadow-xs disabled:opacity-60 cursor-pointer">
+                    @(isUploading ? "Submitting..." : "Submit")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- View Details Modal -->
+@if (showViewModal && selectedPrescription != null)
+{
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 sm:p-6 animate-fade-in">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center shrink-0 bg-white">
+                <div>
+                    <h3 class="text-lg font-semibold text-slate-900">Prescription Details</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">Status: <span class="font-medium text-slate-700">@selectedPrescription.Status</span></p>
+                </div>
+                <button @onclick="CloseViewModal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                </button>
+            </div>
+
+            <div class="p-6 overflow-y-auto space-y-4 text-left">
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Medication</span>
+                            <span class="text-base font-bold text-slate-900">@selectedPrescription.MedicationName</span>
+                        </div>
+                        <span class="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20">
+                            @selectedPrescription.Status
+                        </span>
+                    </div>
+                    <div>
+                        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Dosage &amp; Instructions</span>
+                        <span class="text-sm font-medium text-slate-700">@selectedPrescription.Dosage</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200/60">
+                        <div>
+                            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Prescribed By</span>
+                            <span class="text-sm font-medium text-slate-800">@selectedPrescription.PrescribedBy</span>
+                        </div>
+                        <div>
+                            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Assigned Pharmacy</span>
+                            <span class="text-sm font-medium text-slate-800">@selectedPrescription.PharmacyName</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Digital Document Preview Card -->
+                <div class="border border-slate-200 rounded-xl p-4 flex items-center space-x-3 bg-white">
+                    <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                        <Blazicon Svg="Lucide.FileText" class="w-5 h-5" />
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-slate-900 truncate">@(selectedPrescription.MedicationName)_script.pdf</p>
+                        <p class="text-xs text-slate-400">Digitally signed &amp; encrypted</p>
+                    </div>
+                    <span class="inline-flex items-center px-2 py-1 bg-slate-100 text-slate-600 text-xs font-medium rounded">PDF</span>
+                </div>
+            </div>
+
+            <div class="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex justify-end shrink-0">
+                <button type="button" @onclick="CloseViewModal" class="bg-slate-900 hover:bg-slate-800 text-white font-medium px-5 py-2 rounded-xl text-sm transition-colors shadow-xs cursor-pointer">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+}
+</div>
+
+@code {
+    private List<PrescriptionModel> activePrescriptions = new();
+    private List<PrescriptionModel> pendingPrescriptions = new();
+    private List<PrescriptionModel> historyPrescriptions = new();
+
+    private string activeTab = "Active";
+    private bool isLoading = true;
+    private bool isUploading = false;
+    private string? notificationMessage;
+    private string? modalError;
+
+    // View Modal state
+    private bool showViewModal = false;
+    private PrescriptionModel? selectedPrescription;
+
+    // Tab display helper
+    private List<PrescriptionModel> DisplayedPrescriptions => activeTab switch
+    {
+        "Active" => activePrescriptions,
+        "Pending" => pendingPrescriptions,
+        "History" => historyPrescriptions,
+        _ => activePrescriptions
+    };
+
+    // Modal state
+    private bool showUploadModal = false;
+    private string medicationNameInput = "";
+    private string dosageInput = "";
+    private string prescribedByInput = "";
+    private string preferredPharmacyInput = "Clicks, Claremont";
+    private Guid patientId = Guid.Empty;
+    private System.Threading.CancellationTokenSource? _cts;
+    private bool isManualRefreshing = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var storedId = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authUserId");
+        if (Guid.TryParse(storedId, out var parsedId))
+        {
+            patientId = parsedId;
+        }
+
+        await LoadDataAsync();
+        StartBackgroundPolling();
+    }
+
+    private void StartBackgroundPolling()
+    {
+        _cts?.Cancel();
+        _cts = new System.Threading.CancellationTokenSource();
+        var token = _cts.Token;
+        _ = Task.Run(async () =>
+        {
+            using var periodicTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            try
+            {
+                while (await periodicTimer.WaitForNextTickAsync(token))
+                {
+                    if (!showUploadModal && !showViewModal && patientId != Guid.Empty)
+                    {
+                        await RefreshSilentAsync();
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Patient Prescriptions Poller] {ex.Message}");
+            }
+        }, token);
+    }
+
+    private async Task ManualRefreshAsync()
+    {
+        isManualRefreshing = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await RefreshSilentAsync();
+        }
+        finally
+        {
+            isManualRefreshing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RefreshSilentAsync()
+    {
+        try
+        {
+            var activeTask = PatientService.GetPrescriptionsByStatusAsync(patientId, "Active");
+            var pendingTask = PatientService.GetPrescriptionsByStatusAsync(patientId, "Pending");
+            var historyTask = PatientService.GetPrescriptionsByStatusAsync(patientId, "History");
+
+            await Task.WhenAll(activeTask, pendingTask, historyTask);
+
+            activePrescriptions = (await activeTask).ToList();
+            pendingPrescriptions = (await pendingTask).ToList();
+            historyPrescriptions = (await historyTask).ToList();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            // Load all three tab buckets in parallel
+            var activeTask = PatientService.GetPrescriptionsByStatusAsync(patientId, "Active");
+            var pendingTask = PatientService.GetPrescriptionsByStatusAsync(patientId, "Pending");
+            var historyTask = PatientService.GetPrescriptionsByStatusAsync(patientId, "History");
+
+            await Task.WhenAll(activeTask, pendingTask, historyTask);
+
+            activePrescriptions = (await activeTask).ToList();
+            pendingPrescriptions = (await pendingTask).ToList();
+            historyPrescriptions = (await historyTask).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching prescriptions: {ex.Message}");
+            activePrescriptions = [];
+            pendingPrescriptions = [];
+            historyPrescriptions = [];
+            notificationMessage = $"Unable to load prescriptions from the database: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void SwitchTab(string tab)
+    {
+        activeTab = tab;
+    }
+
+    private void ToggleUploadModal()
+    {
+        showUploadModal = !showUploadModal;
+        if (!showUploadModal)
+        {
+            medicationNameInput = "";
+            dosageInput = "";
+            prescribedByInput = "";
+            modalError = null;
+        }
+    }
+
+    private async Task HandleUploadPrescription()
+    {
+        modalError = null;
+
+        if (string.IsNullOrWhiteSpace(medicationNameInput) || string.IsNullOrWhiteSpace(dosageInput) || string.IsNullOrWhiteSpace(prescribedByInput))
+        {
+            modalError = "Please fill in all fields before submitting.";
+            return;
+        }
+
+        isUploading = true;
+        StateHasChanged();
+
+        var newPrescription = new PrescriptionModel
+        {
+            Id = Guid.NewGuid(),
+            PatientId = patientId,
+            MedicationName = medicationNameInput,
+            Dosage = dosageInput,
+            PrescribedBy = prescribedByInput,
+            PharmacyName = preferredPharmacyInput,
+            Status = "Uploaded",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        try
+        {
+            await PatientService.UploadPrescriptionAsync(newPrescription);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error uploading prescription: {ex.Message}");
+        }
+        finally
+        {
+            isUploading = false;
+        }
+
+        await LoadDataAsync();
+        ToggleUploadModal();
+        activeTab = "Pending";
+        TriggerToast($"Prescription for {newPrescription.MedicationName} submitted — awaiting pharmacist review.");
+    }
+
+    private async Task HandleReorder(PrescriptionModel script)
+    {
+        try
+        {
+            var orderId = await PatientService.RequestPrescriptionRefillAsync(script.Id, patientId);
+            TriggerToast($"Refill requested for {script.MedicationName}. Order {orderId.ToString()[..8]} was sent to the pharmacy.");
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            TriggerToast($"Refill could not be created: {ex.Message}");
+        }
+    }
+
+    private void HandleView(PrescriptionModel script)
+    {
+        selectedPrescription = script;
+        showViewModal = true;
+    }
+
+    private void CloseViewModal()
+    {
+        showViewModal = false;
+        selectedPrescription = null;
+    }
+
+    private void TriggerToast(string message)
+    {
+        notificationMessage = message;
+        StateHasChanged();
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3500);
+            notificationMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void DismissNotification()
+    {
+        notificationMessage = null;
+    }
+}

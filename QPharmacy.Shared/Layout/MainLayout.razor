@@ -1,0 +1,22 @@
+@inherits LayoutComponentBase
+
+<div class="h-screen w-screen flex flex-col bg-slate-50 font-sans overflow-hidden">
+    <!-- Top Navbar (Fixed) -->
+    <TopNavbar />
+
+    <div class="flex flex-1 overflow-hidden">
+        <!-- Sidebar (Fixed Width) -->
+        <Sidebar />
+
+        <!-- Main Content Area (Scrollable) -->
+        <main class="flex-1 overflow-y-auto bg-slate-50 relative p-8">
+            @Body
+        </main>
+    </div>
+</div>
+
+<div id="blazor-error-ui" class="hidden absolute bottom-4 left-4 bg-red-100 text-red-900 px-4 py-3 rounded shadow-lg z-50">
+    An unhandled error has occurred.
+    <a href="" class="reload text-red-700 underline font-semibold ml-2">Reload</a>
+    <a class="dismiss cursor-pointer font-bold ml-4">🗙</a>
+</div>

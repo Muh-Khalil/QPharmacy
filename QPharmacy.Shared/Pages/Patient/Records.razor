@@ -1,0 +1,792 @@
+@page "/patient/records"
+@attribute [Authorize(Roles = "Patient")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@inject IPatientService PatientService
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Health Records - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Success Alert / Toast -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between space-x-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div class="flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="DismissNotification" class="text-white hover:text-emerald-100 transition-colors cursor-pointer">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Health Records</h1>
+            <p class="text-sm text-slate-500 mt-1">Your personal health records, clinical history, and family members you manage.</p>
+        </div>
+        <div class="mt-4 sm:mt-0 flex items-center space-x-2.5">
+            <button @onclick="ToggleReportConditionModal" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-3.5 py-2 rounded-lg font-medium shadow-xs transition-colors text-sm flex items-center space-x-1.5 cursor-pointer">
+                <Blazicon Svg="Lucide.Activity" class="w-4 h-4 text-emerald-600" />
+                <span>Report Condition</span>
+            </button>
+            <button @onclick="ToggleAddMemberModal" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors text-sm flex items-center space-x-2 cursor-pointer">
+                <Blazicon Svg="Lucide.Plus" class="w-4 h-4" />
+                <span>Add Family Member</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Family Member Tabs -->
+    @if (familyMembers != null && familyMembers.Any())
+    {
+        <div class="border-b border-slate-200 mb-6">
+            <nav class="-mb-px flex space-x-8">
+                @foreach (var member in familyMembers)
+                {
+                    var isSelf = member.Relationship == "Self";
+                    var displayName = isSelf ? $"{member.FirstName} (You)" : member.FirstName;
+                    var isActive = member.Id == activeMemberId;
+                    
+                    <button @onclick="() => SelectMemberAsync(member.Id)"
+                            class="whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm transition-all cursor-pointer @(isActive ? "text-emerald-600 border-emerald-500 font-semibold" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300")">
+                        @displayName
+                    </button>
+                }
+            </nav>
+        </div>
+    }
+
+    <!-- Content Area -->
+    @if (isLoading)
+    {
+        <div class="bg-white shadow-sm rounded-xl border border-slate-200 p-12 text-center text-slate-500">
+            <svg class="animate-spin h-8 w-8 mx-auto text-emerald-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Loading health records...</span>
+        </div>
+    }
+    else
+    {
+        <!-- Quick Clinical Metrics Strip -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                    <Blazicon Svg="Lucide.HeartPulse" class="w-5 h-5" />
+                </div>
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Blood Type</div>
+                    <div class="text-sm font-bold text-slate-900">O+ (Rh Pos)</div>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                    <Blazicon Svg="Lucide.Shield" class="w-5 h-5" />
+                </div>
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Allergies</div>
+                    <div class="text-sm font-bold text-slate-900">@conditions.Count(c => c.Type == "Allergy") Documented</div>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                    <Blazicon Svg="Lucide.Activity" class="w-5 h-5" />
+                </div>
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conditions</div>
+                    <div class="text-sm font-bold text-slate-900">@conditions.Count(c => c.Type != "Allergy") Monitored</div>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                    <Blazicon Svg="Lucide.Syringe" class="w-5 h-5" />
+                </div>
+                <div>
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Immunization</div>
+                    <div class="text-sm font-bold text-emerald-700">@vaccinations.Count(v => v.Status == "Up to date") Up to date</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            <!-- Left Column (Conditions & Allergies + Vaccinations) -->
+            <div class="lg:col-span-2 space-y-6">
+                
+                <!-- Conditions & Allergies Card -->
+                <div class="bg-white shadow-sm rounded-xl border border-slate-200 overflow-hidden">
+                    <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <Blazicon Svg="Lucide.Activity" class="w-5 h-5 text-emerald-600" />
+                            <div>
+                                <h2 class="text-base font-semibold text-slate-900">Conditions &amp; Allergies</h2>
+                                <p class="text-xs text-slate-400 mt-0.5">Clinical records &amp; patient self-reported entries</p>
+                            </div>
+                        </div>
+                        <button @onclick="ToggleReportConditionModal" class="inline-flex items-center space-x-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100/80 px-3 py-1.5 rounded-lg border border-emerald-200/60 transition-colors cursor-pointer shadow-2xs">
+                            <Blazicon Svg="Lucide.Plus" class="w-3.5 h-3.5" />
+                            <span>Report Condition</span>
+                        </button>
+                    </div>
+                    
+                    <div class="divide-y divide-slate-100">
+                        @if (conditions == null || !conditions.Any())
+                        {
+                            <div class="p-8 text-center text-slate-500 text-sm">
+                                <p>No conditions or allergies recorded.</p>
+                                <button @onclick="ToggleReportConditionModal" class="mt-3 text-xs font-semibold text-emerald-600 hover:text-emerald-700 cursor-pointer">
+                                    + Add your first condition or allergy
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var cond in conditions)
+                            {
+                                <div class="px-6 py-4 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
+                                    <div>
+                                        <div class="font-semibold text-slate-900 text-sm flex items-center space-x-2">
+                                            <span>@cond.Name</span>
+                                            @if (cond.Notes != null && cond.Notes.Contains("Self-reported"))
+                                            {
+                                                <span class="text-[10px] text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded font-semibold border border-purple-200/50">Self-Reported</span>
+                                            }
+                                        </div>
+                                        <div class="text-xs text-slate-500 mt-0.5">@cond.Notes</div>
+                                    </div>
+                                    <div>
+                                        @if (cond.Type == "Chronic")
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                                                Chronic
+                                            </span>
+                                        }
+                                        else if (cond.Type == "Allergy")
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20">
+                                                Allergy
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-500/20">
+                                                @cond.Type
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+                <!-- Vaccination History Card -->
+                <div class="bg-white shadow-sm rounded-xl border border-slate-200 overflow-hidden">
+                    <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <Blazicon Svg="Lucide.Syringe" class="w-5 h-5 text-emerald-600" />
+                            <div>
+                                <h2 class="text-base font-semibold text-slate-900">Vaccination History</h2>
+                                <p class="text-xs text-slate-400 mt-0.5">Immunization tracking &amp; scheduled boosters</p>
+                            </div>
+                        </div>
+                        <button @onclick="ToggleLogVaccinationModal" class="inline-flex items-center space-x-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100/80 px-3 py-1.5 rounded-lg border border-emerald-200/60 transition-colors cursor-pointer shadow-2xs">
+                            <Blazicon Svg="Lucide.Plus" class="w-3.5 h-3.5" />
+                            <span>Log Vaccine</span>
+                        </button>
+                    </div>
+                    
+                    <div class="divide-y divide-slate-100">
+                        @if (vaccinations == null || !vaccinations.Any())
+                        {
+                            <div class="p-8 text-center text-slate-500 text-sm">
+                                <p>No vaccination history recorded.</p>
+                                <button @onclick="ToggleLogVaccinationModal" class="mt-3 text-xs font-semibold text-emerald-600 hover:text-emerald-700 cursor-pointer">
+                                    + Log an external vaccine or booster
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var vacc in vaccinations)
+                            {
+                                <div class="px-6 py-4 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
+                                    <div>
+                                        <div class="font-semibold text-slate-900 text-sm">@vacc.VaccineName</div>
+                                        <div class="text-xs text-slate-500 mt-0.5">
+                                            @if (vacc.DateAdministered.HasValue)
+                                            {
+                                                <span>Administered @vacc.DateAdministered.Value.ToString("d MMMM yyyy"): @vacc.Notes</span>
+                                            }
+                                            else
+                                            {
+                                                <span>Scheduled: @vacc.Notes</span>
+                                            }
+                                        </div>
+                                    </div>
+                                    <div>
+                                        @if (vacc.Status == "Up to date")
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                                                Up to date
+                                            </span>
+                                        }
+                                        else if (vacc.Status == "Due")
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20">
+                                                Due @(vacc.DateDue?.ToString("yyyy") ?? "")
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-500/20">
+                                                @vacc.Status
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Right Column (Lab Results) -->
+            <div class="space-y-6">
+                
+                <!-- Recent Lab Results Card -->
+                <div class="bg-white shadow-sm rounded-xl border border-slate-200 overflow-hidden">
+                    <div class="px-6 py-5 border-b border-slate-100">
+                        <div class="flex items-center space-x-2">
+                            <Blazicon Svg="Lucide.FlaskConical" class="w-5 h-5 text-emerald-600" />
+                            <div>
+                                <h2 class="text-base font-semibold text-slate-900">Recent Lab Results</h2>
+                                <p class="text-xs text-slate-400 mt-0.5">Clinical panels &amp; reference ranges</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="divide-y divide-slate-100">
+                        @if (labResults == null || !labResults.Any())
+                        {
+                            <div class="p-6 text-center text-slate-500 text-sm">
+                                No lab results recorded.
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var lab in labResults)
+                            {
+                                <div class="px-6 py-4 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
+                                    <div>
+                                        <div class="font-semibold text-slate-900 text-sm">@lab.TestName</div>
+                                        <div class="flex items-center space-x-2 text-xs text-slate-500 mt-0.5">
+                                            <span>@lab.TestDate.ToString("d MMMM yyyy")</span>
+                                            <span>&middot;</span>
+                                            <span class="text-slate-400 font-mono text-[11px]">@GetReferenceRange(lab.TestName)</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        @if (lab.Status == "Attention" || lab.Status == "High")
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                                                @lab.Value
+                                            </span>
+                                        }
+                                        else if (lab.Status == "Normal")
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                                                @lab.Value
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">
+                                                @lab.Value
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    }
+
+    <!-- Add Family Member Modal -->
+    @if (showAddMemberModal)
+    {
+        <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-md w-full mx-4 p-6 animate-in fade-in zoom-in-95 duration-200">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-lg font-semibold text-slate-900">Add Family Member</h3>
+                    <button @onclick="ToggleAddMemberModal" class="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer">
+                        <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                    </button>
+                </div>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">First Name</label>
+                        <input type="text" @bind="newFirstName" placeholder="e.g. Ntando" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Last Name</label>
+                        <input type="text" @bind="newLastName" placeholder="e.g. Mokoena" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Relationship</label>
+                        <select @bind="newRelationship" class="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white">
+                            <option value="Child">Child</option>
+                            <option value="Spouse">Spouse</option>
+                            <option value="Parent">Parent</option>
+                            <option value="Sibling">Sibling</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center space-x-3 pt-2">
+                        <input type="checkbox" @bind="newCanView" id="canViewChk" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4" />
+                        <label for="canViewChk" class="text-sm font-medium text-slate-700">Can view my medical records</label>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <input type="checkbox" @bind="newCanEdit" id="canEditChk" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4" />
+                        <label for="canEditChk" class="text-sm font-medium text-slate-700">Can manage my prescriptions</label>
+                    </div>
+                    <div class="flex space-x-3 pt-4">
+                        <button type="button" @onclick="ToggleAddMemberModal" class="flex-1 bg-slate-50 hover:bg-slate-100 text-slate-700 font-medium px-4 py-2.5 rounded-lg text-sm border border-slate-200 transition-colors cursor-pointer">
+                            Cancel
+                        </button>
+                        <button type="button" @onclick="HandleAddFamilyMember" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-medium px-4 py-2.5 rounded-lg text-sm transition-colors shadow-sm cursor-pointer">
+                            Add Member
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Report Condition / Allergy Modal -->
+    @if (showReportConditionModal)
+    {
+        <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-200">
+                <div class="flex justify-between items-center mb-5 pb-3 border-b border-slate-100">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+                            <Blazicon Svg="Lucide.Activity" class="w-4 h-4" />
+                        </div>
+                        <h3 class="text-base font-bold text-slate-900">Report Condition or Allergy</h3>
+                    </div>
+                    <button @onclick="ToggleReportConditionModal" class="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg cursor-pointer">
+                        <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                    </button>
+                </div>
+                
+                <div class="space-y-4 text-xs">
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase tracking-wider mb-1">Name / Allergen</label>
+                        <input type="text" @bind="newCondName" placeholder="e.g. Penicillin, Asthma, Peanut, Shellfish, Hypertension" class="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase tracking-wider mb-1">Category / Type</label>
+                        <select @bind="newCondType" class="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white">
+                            <option value="Allergy">Allergy (Food, Drug or Environmental)</option>
+                            <option value="Chronic">Chronic Condition (Long-term management)</option>
+                            <option value="Acute">Acute / Other Medical Event</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase tracking-wider mb-1">Severity &amp; Notes</label>
+                        <textarea @bind="newCondNotes" rows="3" placeholder="e.g. Severe anaphylaxis, carries EpiPen; Mild hives reaction; Diagnosed 2024" class="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"></textarea>
+                    </div>
+                    
+                    <div class="flex space-x-3 pt-3">
+                        <button type="button" @onclick="ToggleReportConditionModal" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-4 py-2.5 rounded-xl transition-colors cursor-pointer">
+                            Cancel
+                        </button>
+                        <button type="button" @onclick="HandleAddMedicalCondition" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl transition-colors shadow-xs cursor-pointer">
+                            Save Condition
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Log External Vaccination Modal -->
+    @if (showLogVaccinationModal)
+    {
+        <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-200">
+                <div class="flex justify-between items-center mb-5 pb-3 border-b border-slate-100">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                            <Blazicon Svg="Lucide.Syringe" class="w-4 h-4" />
+                        </div>
+                        <h3 class="text-base font-bold text-slate-900">Log External Vaccination</h3>
+                    </div>
+                    <button @onclick="ToggleLogVaccinationModal" class="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg cursor-pointer">
+                        <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                    </button>
+                </div>
+                
+                <div class="space-y-4 text-xs">
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase tracking-wider mb-1">Vaccine Name</label>
+                        <input type="text" @bind="newVaccineName" placeholder="e.g. Seasonal Influenza (Flu), COVID-19 Pfizer, Tetanus" class="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase tracking-wider mb-1">Status</label>
+                        <select @bind="newVaccineStatus" class="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white">
+                            <option value="Up to date">Administered &amp; Up to Date</option>
+                            <option value="Due">Scheduled / Due Soon</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase tracking-wider mb-1">Date Administered</label>
+                        <input type="date" @bind="newVaccineDate" class="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white" />
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-700 uppercase tracking-wider mb-1">Administering Clinic / Notes</label>
+                        <input type="text" @bind="newVaccineNotes" placeholder="e.g. Clicks Pharmacy, Claremont Clinic; Batch #A402" class="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                    </div>
+                    
+                    <div class="flex space-x-3 pt-3">
+                        <button type="button" @onclick="ToggleLogVaccinationModal" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-4 py-2.5 rounded-xl transition-colors cursor-pointer">
+                            Cancel
+                        </button>
+                        <button type="button" @onclick="HandleAddVaccination" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl transition-colors shadow-xs cursor-pointer">
+                            Save Immunization
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<FamilyMemberModel> familyMembers = new();
+    private Guid activeMemberId = Guid.Empty;
+    private List<MedicalConditionModel> conditions = new();
+    private List<LabResultModel> labResults = new();
+    private List<VaccinationModel> vaccinations = new();
+    
+    private bool isLoading = true;
+    private string? notificationMessage;
+
+    // Add Family Member Modal State
+    private bool showAddMemberModal = false;
+    private string newFirstName = "";
+    private string newLastName = "";
+    private string newRelationship = "Child";
+    private bool newCanView = true;
+    private bool newCanEdit = false;
+
+    // Report Condition Modal State
+    private bool showReportConditionModal = false;
+    private string newCondName = "";
+    private string newCondType = "Allergy";
+    private string newCondNotes = "";
+
+    // Log Vaccination Modal State
+    private bool showLogVaccinationModal = false;
+    private string newVaccineName = "";
+    private string newVaccineStatus = "Up to date";
+    private DateTime newVaccineDate = DateTime.Today;
+    private string newVaccineNotes = "";
+
+    private Guid primaryPatientId = Guid.Empty;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var storedId = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authUserId");
+        if (Guid.TryParse(storedId, out var parsedId))
+        {
+            primaryPatientId = parsedId;
+        }
+
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            var members = await PatientService.GetFamilyMembersAsync(primaryPatientId);
+            familyMembers = members.ToList();
+            
+            if (familyMembers.Any())
+            {
+                var selfMember = familyMembers.FirstOrDefault(m => m.Relationship == "Self") ?? familyMembers.First();
+                activeMemberId = selfMember.Id;
+            }
+            else
+            {
+                activeMemberId = primaryPatientId;
+            }
+            
+            await LoadActiveMemberRecordsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing health records: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SelectMemberAsync(Guid memberId)
+    {
+        if (activeMemberId == memberId) return;
+        
+        activeMemberId = memberId;
+        isLoading = true;
+        StateHasChanged();
+        
+        try
+        {
+            await LoadActiveMemberRecordsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error switching family member records: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadActiveMemberRecordsAsync()
+    {
+        var conditionsTask = PatientService.GetMedicalConditionsAsync(activeMemberId);
+        var labResultsTask = PatientService.GetLabResultsAsync(activeMemberId);
+        var vaccinationsTask = PatientService.GetVaccinationHistoryAsync(activeMemberId);
+
+        await Task.WhenAll(conditionsTask, labResultsTask, vaccinationsTask);
+
+        conditions = (await conditionsTask).ToList();
+        labResults = (await labResultsTask).ToList();
+        vaccinations = (await vaccinationsTask).ToList();
+    }
+
+    private string GetReferenceRange(string testName)
+    {
+        var n = (testName ?? "").ToLower();
+        if (n.Contains("hba1c")) return "Ref: < 7.0%";
+        if (n.Contains("pressure")) return "Ref: < 120/80 mmHg";
+        if (n.Contains("cholesterol")) return "Ref: < 5.0 mmol/L";
+        if (n.Contains("creatinine")) return "Ref: 60 - 110 µmol/L";
+        if (n.Contains("uric")) return "Ref: 0.20 - 0.42 mmol/L";
+        if (n.Contains("ige") || n.Contains("allergy")) return "Ref: < 100 kU/L";
+        return "Clinical standard panel";
+    }
+
+    private void ToggleAddMemberModal()
+    {
+        showAddMemberModal = !showAddMemberModal;
+        if (!showAddMemberModal)
+        {
+            newFirstName = "";
+            newLastName = "";
+            newRelationship = "Child";
+            newCanView = true;
+            newCanEdit = false;
+        }
+    }
+
+    private async Task HandleAddFamilyMember()
+    {
+        if (string.IsNullOrWhiteSpace(newFirstName) || string.IsNullOrWhiteSpace(newLastName))
+        {
+            notificationMessage = "Please enter first and last name.";
+            StateHasChanged();
+            return;
+        }
+
+        var memberFirstName = newFirstName.Trim();
+        var memberLastName = newLastName.Trim();
+
+        var newMember = new FamilyMemberModel
+        {
+            Id = Guid.NewGuid(),
+            PrimaryPatientId = primaryPatientId,
+            FirstName = memberFirstName,
+            LastName = memberLastName,
+            Relationship = newRelationship,
+            CanView = newCanView,
+            CanEdit = newCanEdit
+        };
+
+        try
+        {
+            await PatientService.AddFamilyMemberAsync(newMember);
+            
+            if (!familyMembers.Any(m => m.Id == newMember.Id))
+            {
+                familyMembers.Add(newMember);
+            }
+            
+            activeMemberId = newMember.Id;
+            showAddMemberModal = false;
+
+            newFirstName = "";
+            newLastName = "";
+            newRelationship = "Child";
+            newCanView = true;
+            newCanEdit = false;
+
+            notificationMessage = $"{memberFirstName} added to family group successfully!";
+            StateHasChanged();
+
+            await LoadActiveMemberRecordsAsync();
+        }
+        catch (Exception ex)
+        {
+            notificationMessage = $"Error adding member: {ex.Message}";
+        }
+        
+        await InvokeAsync(StateHasChanged);
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            notificationMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void ToggleReportConditionModal()
+    {
+        showReportConditionModal = !showReportConditionModal;
+        if (!showReportConditionModal)
+        {
+            newCondName = "";
+            newCondType = "Allergy";
+            newCondNotes = "";
+        }
+    }
+
+    private async Task HandleAddMedicalCondition()
+    {
+        if (string.IsNullOrWhiteSpace(newCondName))
+        {
+            notificationMessage = "Please enter condition or allergen name.";
+            StateHasChanged();
+            return;
+        }
+
+        var newCond = new MedicalConditionModel
+        {
+            Id = Guid.NewGuid(),
+            PatientId = activeMemberId,
+            Name = newCondName.Trim(),
+            Type = newCondType,
+            Notes = string.IsNullOrWhiteSpace(newCondNotes) ? $"Self-reported {DateTime.Now:yyyy}" : newCondNotes.Trim(),
+            RecordedAt = DateTime.Now
+        };
+
+        try
+        {
+            await PatientService.AddMedicalConditionAsync(newCond);
+            conditions.Insert(0, newCond);
+            showReportConditionModal = false;
+            newCondName = "";
+            newCondNotes = "";
+            notificationMessage = $"{newCond.Name} recorded in health record!";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            notificationMessage = $"Error saving condition: {ex.Message}";
+        }
+
+        await InvokeAsync(StateHasChanged);
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            notificationMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void ToggleLogVaccinationModal()
+    {
+        showLogVaccinationModal = !showLogVaccinationModal;
+        if (!showLogVaccinationModal)
+        {
+            newVaccineName = "";
+            newVaccineStatus = "Up to date";
+            newVaccineDate = DateTime.Today;
+            newVaccineNotes = "";
+        }
+    }
+
+    private async Task HandleAddVaccination()
+    {
+        if (string.IsNullOrWhiteSpace(newVaccineName))
+        {
+            notificationMessage = "Please enter vaccine name.";
+            StateHasChanged();
+            return;
+        }
+
+        var newVacc = new VaccinationModel
+        {
+            Id = Guid.NewGuid(),
+            PatientId = activeMemberId,
+            VaccineName = newVaccineName.Trim(),
+            Status = newVaccineStatus,
+            Notes = string.IsNullOrWhiteSpace(newVaccineNotes) ? $"Recorded {DateTime.Now:d MMMM yyyy}" : newVaccineNotes.Trim(),
+            DateAdministered = newVaccineStatus == "Up to date" ? newVaccineDate : null,
+            DateDue = newVaccineStatus == "Due" ? newVaccineDate : null
+        };
+
+        try
+        {
+            await PatientService.AddVaccinationAsync(newVacc);
+            vaccinations.Insert(0, newVacc);
+            showLogVaccinationModal = false;
+            newVaccineName = "";
+            newVaccineNotes = "";
+            notificationMessage = $"{newVacc.VaccineName} immunization recorded!";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            notificationMessage = $"Error recording immunization: {ex.Message}";
+        }
+
+        await InvokeAsync(StateHasChanged);
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            notificationMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void DismissNotification()
+    {
+        notificationMessage = null;
+    }
+}

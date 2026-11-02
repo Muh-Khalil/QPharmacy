@@ -1,0 +1,877 @@
+@page "/Login"
+@layout QPharmacy.Shared.Layout.EmptyLayout
+@attribute [AllowAnonymous]
+
+@using Microsoft.AspNetCore.Authorization
+@using QPharmacy.Shared.Models.Auth
+@using Microsoft.AspNetCore.Components.Forms
+@using System.ComponentModel.DataAnnotations
+@using QPharmacy.Shared.Service
+
+@inject IAuthService AuthService
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
+@inject JwtAuthenticationStateProvider AuthenticationStateProvider
+
+<div class="min-h-screen flex flex-col md:flex-row bg-white font-sans">
+    <!-- Left Branding Panel -->
+    <div class="w-full md:w-5/12 p-8 md:p-10 flex flex-col justify-between" style="background-color: #0B2B42;">
+        <div class="flex flex-col gap-6">
+            <div class="flex items-center gap-3">
+                <img src="_content/QPharmacy.Shared/images/qPharmacyLogo.jpg" alt="QPharmacy" class="w-10 h-10 rounded-full" />
+                <span class="text-white text-xl font-bold">QPharmacy</span>
+            </div>
+
+            <div class="rounded-2xl px-4 py-1.5 w-max mt-6" style="background-color: #1E4D6E;">
+                <span class="text-xs font-bold uppercase tracking-wider" style="color: #F6A350;">HEALTHCARE, CONNECTED</span>
+            </div>
+
+            <h1 class="text-white text-3xl md:text-4xl font-bold mt-2 leading-tight">One platform for your whole care team.</h1>
+            <p class="text-sm md:text-base leading-relaxed max-w-sm mt-1" style="color: #A0C6E2;">
+                Patients, doctors, pharmacists, and administrators connect through a secure gateway tailored to their specific healthcare role.
+            </p>
+        </div>
+
+        <div class="flex flex-wrap gap-8 mt-8 md:mt-0 pt-6 border-t border-slate-700/50">
+            <div>
+                <div class="text-white font-bold text-sm">MFA</div>
+                <div class="text-xs" style="color: #A0C6E2;">Enabled by default</div>
+            </div>
+            <div>
+                <div class="text-white font-bold text-sm">POPIA</div>
+                <div class="text-xs" style="color: #A0C6E2;">Aligned data handling</div>
+            </div>
+            <div>
+                <div class="text-white font-bold text-sm">256-bit</div>
+                <div class="text-xs" style="color: #A0C6E2;">Encryption in transit</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Form Panel -->
+    <div class="w-full md:w-7/12 flex items-center justify-center p-6 md:p-12 overflow-y-auto">
+        <div class="w-full max-w-md flex flex-col py-4">
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="mb-6 p-4 rounded-xl flex items-center justify-between bg-rose-50 text-rose-800 border border-rose-200 shadow-xs animate-fade-in">
+                    <div class="flex items-center space-x-3">
+                        <Blazicon Svg="Lucide.Shield" class="w-5 h-5 text-rose-600 shrink-0" />
+                        <span class="font-medium text-sm">@errorMessage</span>
+                    </div>
+                    <button type="button" @onclick="() => errorMessage = null" class="text-rose-400 hover:text-rose-700 cursor-pointer">
+                    <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+                </button>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(successMessage))
+        {
+            <div class="mb-6 p-4 rounded-xl flex items-center justify-between bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-xs animate-fade-in">
+                <div class="flex items-center space-x-3">
+                    <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span class="font-medium text-sm">@successMessage</span>
+                </div>
+                <button type="button" @onclick="() => successMessage = null" class="text-emerald-400 hover:text-emerald-700 cursor-pointer">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- ================= SIGN IN TAB ================= -->
+    @if (activeTab == TabType.SignIn)
+    {
+        <span class="text-slate-400 text-xs font-bold tracking-widest uppercase mb-1">Sign In</span>
+        <h2 class="text-slate-900 text-3xl font-bold mb-1">Welcome back</h2>
+        <p class="text-slate-500 text-sm mb-6">Enter your credentials to access your QPharmacy portal.</p>
+
+        <!-- Role Selector for Sign In -->
+        <div class="bg-slate-100 p-1.5 rounded-xl flex justify-between mb-6 shadow-inner">
+            <button type="button" class="role-tab @(selectedRole == "Patient" ? "active" : "")" @onclick='() => SelectRole("Patient")'>Patient</button>
+            <button type="button" class="role-tab @(selectedRole == "Doctor" ? "active" : "")" @onclick='() => SelectRole("Doctor")'>Doctor</button>
+            <button type="button" class="role-tab @(selectedRole == "Pharmacist" ? "active" : "")" @onclick='() => SelectRole("Pharmacist")'>Pharmacist</button>
+            <button type="button" class="role-tab @(selectedRole == "Admin" ? "active" : "")" @onclick='() => SelectRole("Admin")'>Admin</button>
+        </div>
+
+        <EditForm Model="@signInModel" OnValidSubmit="@HandleSignIn" class="flex flex-col gap-4">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="bg-rose-50 text-rose-600 p-3 rounded-lg text-xs" />
+
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">@emailLabel</label>
+                <InputText @bind-Value="signInModel.Identifier" class="auth-input" placeholder="@emailPlaceholder" />
+                <ValidationMessage For="@(() => signInModel.Identifier)" class="text-rose-500 text-xs" />
+            </div>
+
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">Password</label>
+                <div class="relative flex items-center">
+                    <InputText type="@(showPassword ? "text" : "password")" @bind-Value="signInModel.Password" class="auth-input pr-16" placeholder="Enter your password" />
+                    <button type="button" class="absolute right-4 text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer" @onclick="() => showPassword = !showPassword">
+                    @(showPassword ? "Hide" : "Show")
+                </button>
+            </div>
+            <ValidationMessage For="@(() => signInModel.Password)" class="text-rose-500 text-xs" />
+        </div>
+
+        <div class="flex justify-between items-center mt-1">
+            <label class="flex items-center gap-2 cursor-pointer">
+                <InputCheckbox @bind-Value="signInModel.RememberMe" class="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900" />
+                <span class="text-sm text-slate-600 font-medium">Remember me</span>
+            </label>
+            <button type="button" class="text-sm font-bold text-slate-800 hover:underline cursor-pointer" @onclick="ShowForgotPassword">
+                Forgot password?
+            </button>
+        </div>
+
+        <button type="submit" class="w-full text-white font-bold py-3.5 rounded-xl mt-3 hover:bg-slate-800 transition-all shadow-sm flex justify-center items-center gap-2 cursor-pointer" style="background-color: #0B2B42;" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Signing in...</span>
+            }
+            else
+            {
+                <span>Sign in &rarr;</span>
+            }
+        </button>
+    </EditForm>
+
+    <div class="bg-sky-50 border border-sky-100 rounded-xl p-4 mt-6 flex items-start gap-3">
+        <Blazicon Svg="Lucide.Shield" class="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
+        <p class="text-xs text-sky-900 leading-relaxed font-medium">Multi-factor authentication (MFA) will prompt for a 6-digit verification code upon sign in.</p>
+    </div>
+
+    <div class="mt-8 text-center border-t border-slate-100 pt-6">
+        <span class="text-slate-500 text-sm">New to QPharmacy? </span>
+        <button type="button" class="text-emerald-600 font-bold text-sm hover:underline cursor-pointer" @onclick="SwitchToSignUp">Create an account</button>
+    </div>
+}
+
+<!-- ================= SIGN UP TAB ================= -->
+@if (activeTab == TabType.SignUp)
+{
+    <span class="text-emerald-600 text-xs font-bold tracking-widest uppercase mb-1">Create Account</span>
+    <h2 class="text-slate-900 text-3xl font-bold mb-1">Join QPharmacy</h2>
+    <p class="text-slate-500 text-sm mb-6">Select your user role and enter your details to create an account.</p>
+
+    <!-- Role Selector for Sign Up -->
+    <div class="bg-slate-100 p-1.5 rounded-xl flex justify-between mb-6 shadow-inner">
+        <button type="button" class="role-tab @(signUpModel.Role == "Patient" ? "active" : "")" @onclick='() => SelectSignUpRole("Patient")'>Patient</button>
+        <button type="button" class="role-tab @(signUpModel.Role == "Doctor" ? "active" : "")" @onclick='() => SelectSignUpRole("Doctor")'>Doctor</button>
+        <button type="button" class="role-tab @(signUpModel.Role == "Pharmacist" ? "active" : "")" @onclick='() => SelectSignUpRole("Pharmacist")'>Pharmacist</button>
+        <button type="button" class="role-tab @(signUpModel.Role == "Super Admin" ? "active" : "")" @onclick='() => SelectSignUpRole("Super Admin")'>Admin</button>
+    </div>
+
+
+    <!-- Role Helper Banner -->
+    <div class="mb-5 p-3 rounded-xl border text-xs flex items-center gap-2.5 @(GetSignUpRoleBannerClass())">
+        <Blazicon Svg="Lucide.UserCheck" class="w-4 h-4 shrink-0" />
+        <span>@GetSignUpRoleDescription()</span>
+    </div>
+
+    <EditForm Model="@signUpModel" OnValidSubmit="@HandleSignUp" class="flex flex-col gap-4">
+        <DataAnnotationsValidator />
+        <ValidationSummary class="bg-rose-50 text-rose-600 p-3 rounded-lg text-xs" />
+
+        <!-- Name fields -->
+        <div class="grid grid-cols-2 gap-3">
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">First Name</label>
+                <InputText @bind-Value="signUpModel.FirstName" class="auth-input" placeholder="e.g. Jane" />
+                <ValidationMessage For="@(() => signUpModel.FirstName)" class="text-rose-500 text-xs" />
+            </div>
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">Last Name</label>
+                <InputText @bind-Value="signUpModel.LastName" class="auth-input" placeholder="e.g. Doe" />
+                <ValidationMessage For="@(() => signUpModel.LastName)" class="text-rose-500 text-xs" />
+            </div>
+        </div>
+
+        <!-- Phone Number with +27 prefix -->
+        <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">Phone Number</label>
+            <div class="flex rounded-lg overflow-hidden border border-slate-200 focus-within:ring-2 focus-within:ring-emerald-500 bg-slate-50">
+                <span class="bg-slate-100 text-slate-600 px-3 py-3 text-sm font-semibold border-r border-slate-200 flex items-center">+27</span>
+                <InputText @bind-Value="signUpModel.PhoneNumber" class="w-full bg-transparent px-3 py-3 text-slate-800 placeholder-slate-400 focus:outline-none text-sm" placeholder="82 123 4567" />
+            </div>
+            <ValidationMessage For="@(() => signUpModel.PhoneNumber)" class="text-rose-500 text-xs" />
+            <span class="text-slate-400 text-xs">Used for SMS 6-digit OTP verification</span>
+        </div>
+
+        <!-- Email Address -->
+        <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">Email Address</label>
+            <InputText type="email" @bind-Value="signUpModel.Email" class="auth-input" placeholder="user@example.com" />
+            <ValidationMessage For="@(() => signUpModel.Email)" class="text-rose-500 text-xs" />
+        </div>
+
+        <!-- ID Number (Optional) -->
+        <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">SA ID Number <span class="text-slate-400 font-normal lowercase">(optional)</span></label>
+            <InputText @bind-Value="signUpModel.IdNumber" class="auth-input" placeholder="13-digit ID number" />
+            <ValidationMessage For="@(() => signUpModel.IdNumber)" class="text-rose-500 text-xs" />
+        </div>
+
+        <!-- Role-Specific Fields -->
+        @if (signUpModel.Role == "Doctor")
+        {
+            <div class="flex flex-col gap-3 p-4 bg-emerald-50/50 rounded-xl border border-emerald-100">
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs font-bold text-emerald-900 uppercase tracking-wider">HPCSA Registration No.</label>
+                    <InputText @bind-Value="signUpModel.ProfessionalRegistrationNumber" class="auth-input bg-white" placeholder="MP 1234567" />
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs font-bold text-emerald-900 uppercase tracking-wider">Practice Name</label>
+                    <InputText @bind-Value="signUpModel.OrganizationOrBranch" class="auth-input bg-white" placeholder="Medical Centre / Clinic Name" />
+                </div>
+            </div>
+        }
+        else if (signUpModel.Role == "Pharmacist")
+        {
+            <div class="flex flex-col gap-3 p-4 bg-amber-50/50 rounded-xl border border-amber-100">
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs font-bold text-amber-900 uppercase tracking-wider">SAPC Pharmacy License No.</label>
+                    <InputText @bind-Value="signUpModel.ProfessionalRegistrationNumber" class="auth-input bg-white" placeholder="P-987654" />
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs font-bold text-amber-900 uppercase tracking-wider">Pharmacy Branch / Outlet</label>
+                    <InputText @bind-Value="signUpModel.OrganizationOrBranch" class="auth-input bg-white" placeholder="Pharmacy Name / Location" />
+                </div>
+            </div>
+        }
+        else if (signUpModel.Role == "Super Admin")
+        {
+            <div class="flex flex-col gap-3 p-4 bg-purple-50/50 rounded-xl border border-purple-100">
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs font-bold text-purple-900 uppercase tracking-wider">Admin Security Token / Access Code</label>
+                    <InputText @bind-Value="signUpModel.AdminAccessKey" class="auth-input bg-white" placeholder="System security token" />
+                </div>
+            </div>
+        }
+
+        <!-- Password and Confirm Password -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">Password</label>
+                <InputText type="password" @bind-Value="signUpModel.Password" class="auth-input" placeholder="Min. 8 chars" />
+                <ValidationMessage For="@(() => signUpModel.Password)" class="text-rose-500 text-xs" />
+            </div>
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">Confirm Password</label>
+                <InputText type="password" @bind-Value="signUpModel.ConfirmPassword" class="auth-input" placeholder="Repeat password" />
+                <ValidationMessage For="@(() => signUpModel.ConfirmPassword)" class="text-rose-500 text-xs" />
+            </div>
+        </div>
+
+        <!-- Checkboxes -->
+        <div class="flex flex-col gap-2.5 mt-2">
+            <label class="flex items-start gap-2.5 cursor-pointer">
+                <InputCheckbox @bind-Value="signUpModel.AcceptTerms" class="w-4 h-4 mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
+                <span class="text-xs text-slate-600 leading-normal">
+                    I agree to the <a href="/terms" target="_blank" class="text-emerald-700 font-semibold underline">Terms of Service</a> and <a href="/privacy" target="_blank" class="text-emerald-700 font-semibold underline">Privacy Policy</a>
+                </span>
+            </label>
+            <ValidationMessage For="@(() => signUpModel.AcceptTerms)" class="text-rose-500 text-xs" />
+
+            <label class="flex items-center gap-2.5 cursor-pointer">
+                <InputCheckbox @bind-Value="signUpModel.ReceiveUpdates" class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
+                <span class="text-xs text-slate-600">Receive health tips and prescription updates via WhatsApp</span>
+            </label>
+        </div>
+
+        <button type="submit" class="w-full text-white font-bold py-3.5 rounded-xl mt-3 bg-emerald-600 hover:bg-emerald-700 transition-all shadow-sm flex justify-center items-center gap-2 cursor-pointer" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Creating Account...</span>
+            }
+            else
+            {
+                <span>Create Account &rarr;</span>
+            }
+        </button>
+    </EditForm>
+
+    <div class="mt-8 text-center border-t border-slate-100 pt-6">
+        <span class="text-slate-500 text-sm">Already have a QPharmacy account? </span>
+        <button type="button" class="text-slate-800 font-bold text-sm hover:underline cursor-pointer" @onclick="SwitchToSignIn">Sign in</button>
+    </div>
+}
+</div>
+</div>
+</div>
+
+<!-- ================= OTP VERIFICATION MODAL ================= -->
+@if (showOtpModal)
+{
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-2xl p-6 md:p-8 max-w-md w-full shadow-2xl space-y-5 border border-slate-100">
+            <div class="text-center space-y-2">
+                <div class="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                    <Blazicon Svg="Lucide.ShieldCheck" class="w-6 h-6" />
+                </div>
+                <h3 class="text-xl font-bold text-slate-900">Verify Your Phone</h3>
+                <p class="text-xs text-slate-500">Enter the 6-digit code sent to <span class="font-semibold text-slate-800">+27 @signUpModel.PhoneNumber</span></p>
+            </div>
+
+            <div class="space-y-4">
+                <div class="flex flex-col gap-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-bold text-slate-700 uppercase tracking-wide">6-Digit Code</label>
+                        @if (!string.IsNullOrEmpty(otpCode))
+                        {
+                            <button type="button" class="text-[11px] font-medium text-slate-400 hover:text-slate-600 transition-colors cursor-pointer" @onclick="() => otpCode = string.Empty">Clear</button>
+                        }
+                    </div>
+
+                    <div class="relative w-full">
+                        <input type="text"
+                               inputmode="numeric"
+                               pattern="[0-9]*"
+                               maxlength="6"
+                               autocomplete="one-time-code"
+                               class="absolute inset-0 w-full h-full opacity-0 z-20 cursor-pointer text-transparent selection:bg-transparent"
+                               @bind-value="otpCode"
+                               @bind-value:event="oninput"
+                               @onfocus="() => isOtpFocused = true"
+                               @onblur="() => isOtpFocused = false" />
+
+                        <div class="grid grid-cols-6 gap-2 sm:gap-2.5">
+                            @for (int i = 0; i < 6; i++)
+                            {
+                                var index = i;
+                                var charAt = (otpCode?.Length > index) ? otpCode[index].ToString() : "";
+                                var isFilled = !string.IsNullOrEmpty(charAt);
+                                var isCurrent = isOtpFocused && ((otpCode?.Length ?? 0) == index || ((otpCode?.Length ?? 0) == 6 && index == 5));
+
+                                <div class="h-12 sm:h-14 flex items-center justify-center rounded-xl text-xl sm:text-2xl font-bold transition-all duration-150 select-none
+                                            @(isCurrent
+                                                ? "bg-white border-2 border-emerald-600 ring-4 ring-emerald-500/20 text-slate-900 shadow-xs scale-102"
+                                                : isFilled
+                                                    ? "bg-white border-2 border-slate-300 text-slate-900 shadow-2xs"
+                                                    : "bg-slate-50 border border-slate-200 text-slate-300")">
+                                    @if (isFilled)
+                                    {
+                                        <span>@charAt</span>
+                                    }
+                                    else if (isCurrent)
+                                    {
+                                        <span class="inline-block w-0.5 h-6 bg-emerald-600 animate-pulse"></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-slate-300 font-normal text-sm">·</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex gap-3">
+                    <button type="button" class="flex-1 py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl transition-colors cursor-pointer" @onclick="() => showOtpModal = false">
+                    Cancel
+                </button>
+                <button type="button" class="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-xs flex justify-center items-center gap-2 cursor-pointer" @onclick="VerifyOtp" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    }
+                    <span>Verify Code</span>
+                </button>
+            </div>
+
+            <div class="text-center pt-2">
+                <button type="button" class="text-xs font-semibold text-emerald-600 hover:underline cursor-pointer" @onclick="ResendOtp">
+                    Didn't receive code? Resend
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+}
+
+<!-- ================= RESET PASSWORD MODAL ================= -->
+@if (showResetModal)
+{
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-2xl p-6 md:p-8 max-w-md w-full shadow-2xl space-y-5 border border-slate-100">
+            <div class="text-center space-y-1">
+                <div class="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-2">
+                    <Blazicon Svg="Lucide.Key" class="w-6 h-6" />
+                </div>
+                <h3 class="text-xl font-bold text-slate-900">Reset Password</h3>
+                <p class="text-xs text-slate-500">
+                    @(resetStep == 1 ? "Enter your Email or Phone Number to receive a reset code" : "Enter the 6-digit code and choose a new password")
+                </p>
+            </div>
+
+            @if (resetStep == 1)
+            {
+                <div class="space-y-4">
+                    <div class="flex flex-col gap-1.5">
+                        <label class="text-xs font-bold text-slate-700 uppercase">Email or Phone Number</label>
+                        <input type="text" class="auth-input" placeholder="user@example.com or 0821234567" @bind="resetIdentifier" />
+                    </div>
+                    <div class="flex gap-3">
+                        <button type="button" class="flex-1 py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl transition-colors cursor-pointer" @onclick="() => showResetModal = false">
+                        Cancel
+                    </button>
+                    <button type="button" class="flex-1 py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-xl transition-colors flex justify-center items-center gap-2 cursor-pointer" @onclick="RequestPasswordReset" disabled="@isLoading">
+                        @if (isLoading)
+                        {
+                            <svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                        }
+                        <span>Send Code</span>
+                    </button>
+                </div>
+            </div>
+        }
+        else if (resetStep == 2)
+        {
+            <div class="space-y-4">
+                <div class="flex flex-col gap-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-bold text-slate-700 uppercase tracking-wide">6-Digit Code</label>
+                        @if (!string.IsNullOrEmpty(resetOtpCode))
+                        {
+                            <button type="button" class="text-[11px] font-medium text-slate-400 hover:text-slate-600 transition-colors cursor-pointer" @onclick="() => resetOtpCode = string.Empty">Clear</button>
+                        }
+                    </div>
+
+                    <div class="relative w-full">
+                        <input type="text"
+                               inputmode="numeric"
+                               pattern="[0-9]*"
+                               maxlength="6"
+                               autocomplete="one-time-code"
+                               class="absolute inset-0 w-full h-full opacity-0 z-20 cursor-pointer text-transparent selection:bg-transparent"
+                               @bind-value="resetOtpCode"
+                               @bind-value:event="oninput"
+                               @onfocus="() => isResetOtpFocused = true"
+                               @onblur="() => isResetOtpFocused = false" />
+
+                        <div class="grid grid-cols-6 gap-2 sm:gap-2.5">
+                            @for (int i = 0; i < 6; i++)
+                            {
+                                var index = i;
+                                var charAt = (resetOtpCode?.Length > index) ? resetOtpCode[index].ToString() : "";
+                                var isFilled = !string.IsNullOrEmpty(charAt);
+                                var isCurrent = isResetOtpFocused && ((resetOtpCode?.Length ?? 0) == index || ((resetOtpCode?.Length ?? 0) == 6 && index == 5));
+
+                                <div class="h-12 sm:h-14 flex items-center justify-center rounded-xl text-xl sm:text-2xl font-bold transition-all duration-150 select-none
+                                            @(isCurrent
+                                                ? "bg-white border-2 border-blue-600 ring-4 ring-blue-500/20 text-slate-900 shadow-xs scale-102"
+                                                : isFilled
+                                                    ? "bg-white border-2 border-slate-300 text-slate-900 shadow-2xs"
+                                                    : "bg-slate-50 border border-slate-200 text-slate-300")">
+                                    @if (isFilled)
+                                    {
+                                        <span>@charAt</span>
+                                    }
+                                    else if (isCurrent)
+                                    {
+                                        <span class="inline-block w-0.5 h-6 bg-blue-600 animate-pulse"></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-slate-300 font-normal text-sm">·</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs font-bold text-slate-700 uppercase">New Password</label>
+                    <input type="password" class="auth-input" @bind="newPassword" placeholder="Min 8 characters" />
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs font-bold text-slate-700 uppercase">Confirm New Password</label>
+                    <input type="password" class="auth-input" @bind="confirmNewPassword" placeholder="Repeat new password" />
+                </div>
+
+                <div class="flex gap-3 pt-2">
+                    <button type="button" class="flex-1 py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl transition-colors cursor-pointer" @onclick="() => resetStep = 1">
+                    Back
+                </button>
+                <button type="button" class="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors flex justify-center items-center gap-2 cursor-pointer" @onclick="CompletePasswordReset" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    }
+                    <span>Reset Password</span>
+                </button>
+            </div>
+        </div>
+    }
+</div>
+</div>
+}
+
+@code {
+    private string selectedRole = "Patient";
+    private string emailLabel = "Email address";
+    private string emailPlaceholder = "you@email.com";
+
+    private TabType activeTab = TabType.SignIn;
+    private SignInModel signInModel = new();
+    private SignUpModel signUpModel = new();
+    private bool isLoading = false;
+    private bool showPassword = false;
+    private bool showOtpModal = false;
+    private string _otpCode = "";
+    private string otpCode
+    {
+        get => _otpCode;
+        set => _otpCode = new string((value ?? "").Where(char.IsLetterOrDigit).Take(6).ToArray());
+    }
+    private bool isOtpFocused = false;
+    private string pendingOtpVerificationId = "";
+
+    private bool showResetModal = false;
+    private int resetStep = 1;
+    private string resetIdentifier = "";
+    private string _resetOtpCode = "";
+    private string resetOtpCode
+    {
+        get => _resetOtpCode;
+        set => _resetOtpCode = new string((value ?? "").Where(char.IsLetterOrDigit).Take(6).ToArray());
+    }
+    private bool isResetOtpFocused = false;
+    private string newPassword = "";
+    private string confirmNewPassword = "";
+    private string pendingResetVerificationId = "";
+    private string? errorMessage;
+    private string? successMessage;
+
+    private void SelectRole(string role)
+    {
+        selectedRole = role;
+        switch (role)
+        {
+            case "Patient":
+                emailLabel = "Email address";
+                emailPlaceholder = "you@email.com";
+                break;
+            case "Doctor":
+                emailLabel = "Practice email";
+                emailPlaceholder = "you@practice.com";
+                break;
+            case "Pharmacist":
+                emailLabel = "Pharmacy staff email";
+                emailPlaceholder = "you@pharmacy.com";
+                break;
+            case "Admin":
+                emailLabel = "Admin email";
+                emailPlaceholder = "admin@qpharmacy.com";
+                break;
+        }
+    }
+
+    private void SelectSignUpRole(string role)
+    {
+        signUpModel.Role = role;
+    }
+
+    private string GetSignUpRoleBannerClass()
+    {
+        return signUpModel.Role switch
+        {
+            "Doctor" => "bg-emerald-50 text-emerald-900 border-emerald-200",
+            "Pharmacist" => "bg-amber-50 text-amber-900 border-amber-200",
+            "Super Admin" => "bg-purple-50 text-purple-900 border-purple-200",
+            _ => "bg-sky-50 text-sky-900 border-sky-200"
+        };
+    }
+
+    private string GetSignUpRoleDescription()
+    {
+        return signUpModel.Role switch
+        {
+            "Doctor" => "Doctor Portal: Issue e-prescriptions, track patient treatments & collaborate with pharmacists.",
+            "Pharmacist" => "Pharmacist Portal: Manage dispensing queue, clinical verification & inventory stock.",
+            "Super Admin" => "Super Admin Portal: Platform user role management, system audit logs & CMS content.",
+            _ => "Patient Portal: Order prescriptions, track medication delivery & access personal health records."
+        };
+    }
+
+    private void SwitchToSignIn()
+    {
+        activeTab = TabType.SignIn;
+        errorMessage = null;
+        successMessage = null;
+        StateHasChanged();
+    }
+
+    private void SwitchToSignUp()
+    {
+        activeTab = TabType.SignUp;
+        errorMessage = null;
+        successMessage = null;
+        signUpModel = new SignUpModel();
+        StateHasChanged();
+    }
+
+    private async Task HandleSignIn()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            var result = await AuthService.SignInAsync(signInModel);
+            if (result.Success)
+            {
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", "authToken", result.Token);
+                var fullName = $"{result.User.FirstName} {result.User.LastName}".Trim();
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", "authFirstName", string.IsNullOrEmpty(fullName) ? result.User.FirstName : fullName);
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", "authUserId", result.User.Id.ToString());
+                var actualRole = GetUserRole(result.User);
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", "authRole", actualRole);
+                await AuthenticationStateProvider.MarkAuthenticatedAsync(result.Token);
+
+                if (actualRole == "Admin")
+                    Navigation.NavigateTo("/admin/dashboard");
+                else if (actualRole == "Pharmacist")
+                    Navigation.NavigateTo("/pharmacist/dashboard");
+                else if (actualRole == "Doctor")
+                    Navigation.NavigateTo("/doctor/dashboard");
+                else if (actualRole == "Driver")
+                    Navigation.NavigateTo("/driver/dashboard");
+                else
+                    Navigation.NavigateTo("/patient/dashboard");
+            }
+            else
+            {
+                errorMessage = result.ErrorMessage;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static string GetUserRole(QPharmacy.Shared.Models.Database.UserModel user)
+    {
+        if (user.IsAdmin) return "Admin";
+        if (user.IsPharmacist) return "Pharmacist";
+        if (user.IsDoctor) return "Doctor";
+        if (user.IsDriver) return "Driver";
+        return "Patient";
+    }
+
+    private async Task HandleSignUp()
+    {
+        errorMessage = null;
+        if (signUpModel.Password != signUpModel.ConfirmPassword)
+        {
+            errorMessage = "Passwords do not match";
+            return;
+        }
+        isLoading = true;
+        try
+        {
+            var registerResult = await AuthService.RegisterAsync(signUpModel);
+            if (registerResult.Success)
+            {
+                pendingOtpVerificationId = registerResult.VerificationId;
+                showOtpModal = true;
+#if DEBUG
+                otpCode = "123456";
+#endif
+            }
+            else
+            {
+                await ShowToast("Registration Failed", registerResult.ErrorMessage, "error");
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast("Error", ex.Message, "error");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task VerifyOtp()
+    {
+        isLoading = true;
+        try
+        {
+            var result = await AuthService.VerifyOtpAsync(pendingOtpVerificationId, otpCode);
+            if (result.Success)
+            {
+                showOtpModal = false;
+                await ShowToast("Success", "Account created successfully!", "success");
+                signInModel.Identifier = signUpModel.PhoneNumber;
+                signInModel.Password = signUpModel.Password;
+                selectedRole = signUpModel.Role == "Super Admin" ? "Admin" : signUpModel.Role;
+                await HandleSignIn();
+            }
+            else
+            {
+                await ShowToast("Invalid Code", "Please check your OTP and try again", "error");
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast("Error", ex.Message, "error");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ResendOtp()
+    {
+        try
+        {
+            await AuthService.ResendOtpAsync(pendingOtpVerificationId);
+            await ShowToast("Code Sent", "New verification code sent to your phone", "success");
+        }
+        catch (Exception ex)
+        {
+            await ShowToast("Error", ex.Message, "error");
+        }
+    }
+
+    private void ShowForgotPassword()
+    {
+        resetIdentifier = "";
+        resetOtpCode = "";
+        newPassword = "";
+        confirmNewPassword = "";
+        resetStep = 1;
+        showResetModal = true;
+        StateHasChanged();
+    }
+
+    private async Task RequestPasswordReset()
+    {
+        if (string.IsNullOrWhiteSpace(resetIdentifier))
+        {
+            await ShowToast("Error", "Please enter your Email or Phone Number", "error");
+            return;
+        }
+
+        isLoading = true;
+        try
+        {
+            var result = await AuthService.RequestPasswordResetAsync(resetIdentifier);
+            if (result.Success)
+            {
+                pendingResetVerificationId = result.VerificationId;
+                resetStep = 2;
+                await ShowToast("Code Sent", "Verification code has been sent to your phone", "success");
+#if DEBUG
+                resetOtpCode = "000000";
+#endif
+            }
+            else
+            {
+                await ShowToast("Error", result.ErrorMessage, "error");
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast("Error", ex.Message, "error");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task CompletePasswordReset()
+    {
+        if (string.IsNullOrWhiteSpace(resetOtpCode) || resetOtpCode.Length != 6)
+        {
+            await ShowToast("Error", "Please enter the 6-digit code", "error");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8)
+        {
+            await ShowToast("Error", "Password must be at least 8 characters long", "error");
+            return;
+        }
+
+        if (newPassword != confirmNewPassword)
+        {
+            await ShowToast("Error", "Passwords do not match", "error");
+            return;
+        }
+
+        isLoading = true;
+        try
+        {
+            var result = await AuthService.CompletePasswordResetAsync(pendingResetVerificationId, resetOtpCode, newPassword);
+            if (result.Success)
+            {
+                showResetModal = false;
+                await ShowToast("Success", "Password reset successfully! You can now log in.", "success");
+
+                signInModel.Identifier = resetIdentifier;
+                signInModel.Password = "";
+                activeTab = TabType.SignIn;
+            }
+            else
+            {
+                await ShowToast("Error", result.ErrorMessage, "error");
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowToast("Error", ex.Message, "error");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ShowToast(string title, string message, string type)
+    {
+        if (type == "error" || type == "warning")
+            errorMessage = message;
+        else
+            successMessage = message;
+
+        StateHasChanged();
+
+        _ = Task.Delay(5000).ContinueWith(_ =>
+        {
+            errorMessage = null;
+            successMessage = null;
+            InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private enum TabType { SignIn, SignUp }
+}

@@ -1,0 +1,1280 @@
+@page "/patient/orders"
+@attribute [Authorize(Roles = "Patient")]
+@layout QPharmacy.Shared.Layout.MainLayout
+@using QPharmacy.Services
+@using QPharmacy.Shared.Models.Database
+@using Blazicons
+@inject IPatientService PatientService
+@inject IPaymentWorkflowService PaymentService
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+<PageTitle>Orders &amp; Delivery - QPharmacy</PageTitle>
+
+<div class="max-w-6xl mx-auto pb-12">
+    <!-- Success Alert / Toast -->
+    @if (!string.IsNullOrEmpty(notificationMessage))
+    {
+        <div class="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between space-x-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div class="flex items-center space-x-2">
+                <Blazicon Svg="Lucide.Check" class="w-5 h-5 text-white" />
+                <span class="text-sm font-medium">@notificationMessage</span>
+            </div>
+            <button @onclick="DismissNotification" class="text-white hover:text-emerald-100 transition-colors cursor-pointer">
+                <Blazicon Svg="Lucide.X" class="w-4 h-4" />
+            </button>
+        </div>
+    }
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900 tracking-tight">Orders &amp; Delivery</h1>
+            <p class="text-sm text-slate-500 mt-1">Track current orders, pay pending balances, and browse the wellness marketplace.</p>
+        </div>
+        <div class="mt-4 sm:mt-0 flex items-center space-x-3">
+            
+            <button @onclick="ManualRefreshAsync" disabled="@isManualRefreshing" class="inline-flex items-center space-x-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg shadow-2xs transition-all cursor-pointer">
+                <Blazicon Svg="Lucide.RefreshCw" class="@(isManualRefreshing ? "w-3.5 h-3.5 animate-spin text-emerald-600" : "w-3.5 h-3.5 text-slate-500")" />
+                <span>Refresh</span>
+            </button>
+            <button @onclick="NavigateToFullMarketplace" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors text-sm cursor-pointer">
+                Browse marketplace
+            </button>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="bg-white shadow-sm rounded-xl border border-slate-200 p-12 text-center text-slate-500">
+            <svg class="animate-spin h-8 w-8 mx-auto text-emerald-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>Loading orders...</span>
+        </div>
+    }
+    else
+    {
+        <!-- Active Order Tracker -->
+        @if (activeOrder != null)
+        {
+            var progressPercent = activeOrder.Status switch
+            {
+                "Dispensed" => 15,
+                "In transit" => 70,
+                "Delivered" => 100,
+                _ => 0
+            };
+
+            <div class="bg-white shadow-sm rounded-xl border border-slate-200 p-6 mb-8">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <div class="flex items-center space-x-3">
+                            <h2 class="text-base font-semibold text-slate-900">
+                                Order #@activeOrder.OrderNumber &middot; @(activeOrder.Status == "In transit" ? "In transit" : activeOrder.Status)
+                            </h2>
+                            @if (activeOrder.PaymentStatus == "Paid")
+                            {
+                                <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                                    <Blazicon Svg="Lucide.Check" class="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                                    Paid
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                                    <Blazicon Svg="Lucide.Clock" class="w-3.5 h-3.5 mr-1 text-amber-600" />
+                                    Awaiting Payment
+                                </span>
+                            }
+                        </div>
+                        <p class="text-xs text-slate-500 mt-1">
+                            @activeOrder.ItemsCount items &middot; Dispatched from @activeOrder.DispatchedFrom &middot; <strong class="text-slate-900 font-semibold">Total: R @activeOrder.TotalAmount.ToString("N2")</strong>
+                        </p>
+                    </div>
+
+                    @if (activeOrder.PaymentStatus != "Paid")
+                    {
+                        <div>
+                            <button @onclick="() => OpenCheckout(activeOrder)" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-4 py-2 rounded-lg shadow-sm transition-colors flex items-center space-x-1.5 cursor-pointer">
+                                <Blazicon Svg="Lucide.CreditCard" class="w-4 h-4" />
+                                <span>Pay Order (R @activeOrder.TotalAmount.ToString("N2"))</span>
+                            </button>
+                        </div>
+                    }
+                </div>
+
+                <!-- Custom Progress Bar -->
+                <div class="relative mt-8 mb-4 max-w-4xl mx-auto px-4">
+                    <!-- Background Track -->
+                    <div class="absolute top-1/2 left-4 right-4 h-1 bg-slate-100 -translate-y-1/2 rounded-full"></div>
+                    <!-- Active Progress Track -->
+                    <div class="absolute top-1/2 left-4 h-1 bg-emerald-600 -translate-y-1/2 rounded-full transition-all duration-700" style="width: calc(@(progressPercent)% - 2rem)"></div>
+                    
+                    <!-- Nodes -->
+                    <div class="relative flex justify-between">
+                        <!-- Dispensed Node -->
+                        <div class="flex flex-col items-center">
+                            <div class="w-5 h-5 rounded-full border-2 bg-white flex items-center justify-center transition-all duration-300 @(progressPercent >= 15 ? "border-emerald-600 text-emerald-600 ring-4 ring-emerald-50" : "border-slate-200 text-slate-300")">
+                                <div class="w-2 h-2 rounded-full bg-current"></div>
+                            </div>
+                            <span class="text-xs font-semibold mt-2 transition-colors @(progressPercent >= 15 ? "text-slate-900" : "text-slate-400")">Dispensed</span>
+                        </div>
+                        
+                        <!-- Out for delivery Node -->
+                        <div class="flex flex-col items-center">
+                            <div class="w-5 h-5 rounded-full border-2 bg-white flex items-center justify-center transition-all duration-300 @(progressPercent >= 70 ? "border-emerald-600 text-emerald-600 ring-4 ring-emerald-50" : "border-slate-200 text-slate-300")">
+                                <div class="w-2 h-2 rounded-full bg-current"></div>
+                            </div>
+                            <span class="text-xs font-semibold mt-2 transition-colors @(progressPercent >= 70 ? "text-slate-900" : "text-slate-400")">Out for delivery</span>
+                        </div>
+                        
+                        <!-- Delivered Node -->
+                        <div class="flex flex-col items-center">
+                            <div class="w-5 h-5 rounded-full border-2 bg-white flex items-center justify-center transition-all duration-300 @(progressPercent >= 100 ? "border-emerald-600 text-emerald-600 ring-4 ring-emerald-50" : "border-slate-200 text-slate-300")">
+                                <div class="w-2 h-2 rounded-full bg-current"></div>
+                            </div>
+                            <span class="text-xs font-semibold mt-2 transition-colors @(progressPercent >= 100 ? "text-slate-900" : "text-slate-400")">Delivered</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            <!-- Left Column: Order History -->
+            <div class="lg:col-span-2 space-y-6">
+                <div class="bg-white shadow-sm rounded-xl border border-slate-200 overflow-hidden">
+                    <div class="px-6 py-5 border-b border-slate-100">
+                        <h2 class="text-base font-semibold text-slate-900">Order history</h2>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse min-w-[660px]">
+                            <thead>
+                                <tr class="border-b border-slate-200/80 text-slate-400 text-xs font-semibold uppercase tracking-wider bg-slate-50/75">
+                                    <th class="px-5 py-3.5 font-semibold whitespace-nowrap">Order</th>
+                                    <th class="px-4 py-3.5 font-semibold whitespace-nowrap">Date</th>
+                                    <th class="px-4 py-3.5 font-semibold whitespace-nowrap">Total</th>
+                                    <th class="px-4 py-3.5 font-semibold whitespace-nowrap">Status</th>
+                                    <th class="px-4 py-3.5 font-semibold whitespace-nowrap">Payment</th>
+                                    <th class="px-5 py-3.5 font-semibold text-right whitespace-nowrap">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 text-sm">
+                                @if (orderHistory == null || !orderHistory.Any())
+                                {
+                                    <tr>
+                                        <td colspan="6" class="px-6 py-10 text-center text-slate-400">
+                                            <div class="flex flex-col items-center justify-center">
+                                                <Blazicon Svg="Lucide.PackageOpen" class="w-8 h-8 text-slate-300 mb-2" />
+                                                <p class="font-medium text-slate-500">No past orders found.</p>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                                else
+                                {
+                                    @foreach (var order in orderHistory)
+                                    {
+                                        <tr class="hover:bg-slate-50/60 transition-colors">
+                                            <td class="px-5 py-4 whitespace-nowrap">
+                                                <span class="font-mono text-xs font-bold text-slate-800 bg-slate-100/90 px-2.5 py-1 rounded-md border border-slate-200/70 shadow-2xs tracking-tight">
+                                                    @order.OrderNumber
+                                                </span>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm text-slate-600 font-medium">
+                                                @order.OrderDate.ToString("dd MMM yyyy")
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm font-bold text-slate-900">
+                                                R&nbsp;@order.TotalAmount.ToString("N2")
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                @if (order.Status == "In transit")
+                                                {
+                                                    <span class="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 ring-1 ring-inset ring-sky-600/20 whitespace-nowrap">
+                                                        <span class="w-1.5 h-1.5 rounded-full bg-sky-500 mr-1.5 animate-pulse"></span>
+                                                        In transit
+                                                    </span>
+                                                }
+                                                else if (order.Status == "Delivered")
+                                                {
+                                                    <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20 whitespace-nowrap">
+                                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span>
+                                                        Delivered
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-400/20 whitespace-nowrap">
+                                                        @order.Status
+                                                    </span>
+                                                }
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                @if (order.PaymentStatus == "Paid")
+                                                {
+                                                    <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20 whitespace-nowrap">
+                                                        <Blazicon Svg="Lucide.Check" class="w-3.5 h-3.5 mr-1 text-emerald-600 shrink-0" />
+                                                        Paid
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-600/20 whitespace-nowrap">
+                                                        <Blazicon Svg="Lucide.Clock" class="w-3.5 h-3.5 mr-1 text-amber-600 shrink-0" />
+                                                        Unpaid
+                                                    </span>
+                                                }
+                                            </td>
+                                            <td class="px-5 py-4 text-right whitespace-nowrap">
+                                                @if (order.PaymentStatus != "Paid")
+                                                {
+                                                    <button @onclick="() => OpenCheckout(order)" class="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg shadow-xs transition-all cursor-pointer">
+                                                        <span>Pay Order</span>
+                                                        <Blazicon Svg="Lucide.ArrowRight" class="w-3.5 h-3.5" />
+                                                    </button>
+                                                }
+                                                else
+                                                {
+                                                    <span class="inline-flex items-center text-xs font-semibold text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200/60">
+                                                        Settled
+                                                    </span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Wellness Marketplace -->
+            <div class="space-y-6">
+                <!-- Basket Floating Widget (if items in basket) -->
+                @if (CartTotalCount > 0)
+                {
+                    <div class="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-xl p-4.5 text-white shadow-md animate-in fade-in slide-in-from-top-2 duration-200">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-2.5">
+                                <div class="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                                    <Blazicon Svg="Lucide.ShoppingCart" class="w-4 h-4 text-white" />
+                                </div>
+                                <div>
+                                    <div class="text-xs font-semibold text-emerald-100">Your Basket</div>
+                                    <div class="text-sm font-bold">@CartTotalCount item@(CartTotalCount > 1 ? "s" : "") &middot; R @CartTotalPrice.ToString("N2")</div>
+                                </div>
+                            </div>
+                            <button @onclick="ClearBasket" class="text-emerald-200 hover:text-white text-xs underline cursor-pointer">
+                                Clear
+                            </button>
+                        </div>
+                        <button @onclick="CheckoutBasketAsync" class="mt-3 w-full bg-white text-emerald-800 hover:bg-emerald-50 font-bold text-xs py-2.5 px-3 rounded-lg shadow-sm transition-colors flex items-center justify-center space-x-2 cursor-pointer">
+                            <span>Checkout Basket (R @CartTotalPrice.ToString("N2"))</span>
+                            <Blazicon Svg="Lucide.ArrowRight" class="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                }
+
+                <div class="bg-white shadow-sm rounded-xl border border-slate-200 overflow-hidden">
+                    <div class="px-6 py-4.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                        <div>
+                            <h2 class="text-sm font-bold text-slate-900">Wellness Marketplace</h2>
+                            <p class="text-xs text-slate-500 mt-0.5">Vitamins, monitors &amp; first aid</p>
+                        </div>
+                        <button @onclick="NavigateToFullMarketplace" class="inline-flex items-center space-x-1 text-xs font-semibold text-emerald-600 hover:text-emerald-700 transition-colors cursor-pointer">
+                            <span>Browse All (@marketplaceProducts.Count)</span>
+                            <Blazicon Svg="Lucide.ArrowRight" class="w-3 h-3" />
+                        </button>
+                    </div>
+
+                    <div class="divide-y divide-slate-100">
+                        @if (marketplaceProducts == null || !marketplaceProducts.Any())
+                        {
+                            <div class="p-6 text-center text-slate-500 text-sm">
+                                Loading marketplace items...
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var prod in marketplaceProducts.Take(4))
+                            {
+                                <div class="p-4 flex items-center justify-between hover:bg-slate-50/60 transition-colors">
+                                    <div class="flex items-center space-x-3 min-w-0 pr-2">
+                                        <div class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center border border-slate-200/60 shrink-0 text-slate-600">
+                                            @if (prod.IconName == "Activity")
+                                            {
+                                                <Blazicon Svg="Lucide.Activity" class="w-5 h-5 text-sky-600" />
+                                            }
+                                            else if (prod.IconName == "Package")
+                                            {
+                                                <Blazicon Svg="Lucide.Package" class="w-5 h-5 text-amber-600" />
+                                            }
+                                            else
+                                            {
+                                                <Blazicon Svg="Lucide.ShoppingBag" class="w-5 h-5 text-emerald-600" />
+                                            }
+                                        </div>
+                                        <div class="min-w-0">
+                                            <div class="font-semibold text-slate-900 text-xs truncate">@prod.Name</div>
+                                            <div class="flex items-center space-x-2 mt-0.5">
+                                                <span class="text-xs font-bold text-slate-900">R @prod.Price.ToString("N2")</span>
+                                                <span class="text-[10px] text-slate-400 font-medium px-1.5 py-0.5 bg-slate-100 rounded">@((prod.Category ?? "General").Split('&')[0].Trim())</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-1.5 shrink-0">
+                                        <button @onclick="() => AddToBasket(prod)" title="Add to Basket" class="p-1.5 rounded-lg border border-slate-200 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-600 transition-colors cursor-pointer">
+                                            <Blazicon Svg="Lucide.ShoppingCart" class="w-3.5 h-3.5" />
+                                        </button>
+                                        <button @onclick="() => PlaceMarketplaceOrder(prod)" title="Direct Order" class="bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs px-2.5 py-1.5 rounded-lg shadow-xs transition-colors cursor-pointer">
+                                            Buy
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <div class="p-3 bg-slate-50 border-t border-slate-100">
+                        <button @onclick="NavigateToFullMarketplace" class="w-full py-2 px-3 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 transition-colors text-center cursor-pointer flex items-center justify-center space-x-1.5">
+                            <Blazicon Svg="Lucide.ShoppingBag" class="w-3.5 h-3.5 text-slate-500" />
+                            <span>Open Full Marketplace Catalog</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Wellness Marketplace Modal -->
+    @if (showMarketplaceModal)
+    {
+        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                <!-- Modal Header -->
+                <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                            <Blazicon Svg="Lucide.ShoppingBag" class="w-5 h-5" />
+                        </div>
+                        <div>
+                            <div class="flex items-center space-x-2">
+                                <h3 class="text-lg font-bold text-slate-900">Wellness &amp; Health Marketplace</h3>
+                                <span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2 py-0.5 rounded-full">@marketplaceProducts.Count Products</span>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-0.5">Explore vitamins, diagnostic monitoring devices and OTC essentials for direct delivery.</p>
+                        </div>
+                    </div>
+                    <button @onclick="ToggleMarketplaceModal" class="text-slate-400 hover:text-slate-600 transition-colors p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer">
+                        <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                    </button>
+                </div>
+
+                <!-- Controls & Filters Bar -->
+                <div class="px-6 py-3.5 border-b border-slate-100 bg-white space-y-3">
+                    <div class="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between">
+                        <!-- Search Box -->
+                        <div class="relative flex-1">
+                            <Blazicon Svg="Lucide.Search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                            <input type="text"
+                                   placeholder="Search products, vitamins, monitors, essentials..."
+                                   @bind="marketplaceSearchQuery"
+                                   @bind:event="oninput"
+                                   class="w-full pl-9 pr-8 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all" />
+                            @if (!string.IsNullOrEmpty(marketplaceSearchQuery))
+                            {
+                                <button @onclick='() => marketplaceSearchQuery = string.Empty' class="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer">
+                                    <Blazicon Svg="Lucide.X" class="w-3.5 h-3.5" />
+                                </button>
+                            }
+                        </div>
+
+                        <!-- Basket Summary (if items in cart) -->
+                        @if (CartTotalCount > 0)
+                        {
+                            <div class="flex items-center space-x-2 shrink-0">
+                                <div class="text-xs font-bold text-slate-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
+                                    🛒 @CartTotalCount in basket (R @CartTotalPrice.ToString("N2"))
+                                </div>
+                                <button @onclick="CheckoutBasketAsync" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-3.5 py-2 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5">
+                                    <span>Checkout Basket</span>
+                                    <Blazicon Svg="Lucide.ArrowRight" class="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        }
+                    </div>
+
+                    <!-- Category Pills -->
+                    <div class="flex items-center space-x-1.5 overflow-x-auto pb-1 text-xs">
+                        <button @onclick='() => selectedMarketplaceCategory = "All"'
+                                class="px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap @(selectedMarketplaceCategory == "All" ? "bg-slate-900 text-white font-semibold shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200")">
+                            All Items (@marketplaceProducts.Count)
+                        </button>
+                        <button @onclick='() => selectedMarketplaceCategory = "Vitamins & Supplements"'
+                                class="px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap @(selectedMarketplaceCategory == "Vitamins & Supplements" ? "bg-slate-900 text-white font-semibold shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200")">
+                            Vitamins &amp; Supplements (@marketplaceProducts.Count(p => (p.Category ?? "").Contains("Vitamins")))
+                        </button>
+                        <button @onclick='() => selectedMarketplaceCategory = "Devices & Monitors"'
+                                class="px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap @(selectedMarketplaceCategory == "Devices & Monitors" ? "bg-slate-900 text-white font-semibold shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200")">
+                            Devices &amp; Monitors (@marketplaceProducts.Count(p => (p.Category ?? "").Contains("Devices")))
+                        </button>
+                        <button @onclick='() => selectedMarketplaceCategory = "First Aid & OTC"'
+                                class="px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap @(selectedMarketplaceCategory == "First Aid & OTC" ? "bg-slate-900 text-white font-semibold shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200")">
+                            First Aid &amp; OTC (@marketplaceProducts.Count(p => (p.Category ?? "").Contains("First Aid")))
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Products Grid -->
+                <div class="flex-1 overflow-y-auto p-6 bg-slate-50/30">
+                    @{
+                        var displayedProducts = FilteredMarketplaceProducts.ToList();
+                    }
+                    @if (!displayedProducts.Any())
+                    {
+                        <div class="py-16 text-center">
+                            <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
+                                <Blazicon Svg="Lucide.Search" class="w-6 h-6" />
+                            </div>
+                            <h4 class="text-sm font-bold text-slate-700">No products found</h4>
+                            <p class="text-xs text-slate-500 mt-1">Try searching for a different keyword or select another category filter.</p>
+                            <button @onclick='() => { selectedMarketplaceCategory = "All"; marketplaceSearchQuery = string.Empty; }' class="mt-3 text-xs font-semibold text-emerald-600 hover:text-emerald-700 cursor-pointer">
+                                Reset filters
+                            </button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            @foreach (var prod in displayedProducts)
+                            {
+                                var currentQty = GetQuantity(prod.Id);
+                                <div class="bg-white rounded-xl border border-slate-200/80 p-4 shadow-xs hover:shadow-md hover:border-slate-300 transition-all flex flex-col justify-between group">
+                                    <div>
+                                        <!-- Top badge row -->
+                                        <div class="flex items-center justify-between mb-2.5">
+                                            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md @((prod.Category ?? "").Contains("Vitamins") ? "bg-purple-50 text-purple-700" : (prod.Category ?? "").Contains("Devices") ? "bg-sky-50 text-sky-700" : "bg-amber-50 text-amber-700")">
+                                                @((prod.Category ?? "General").Split('&')[0].Trim())
+                                            </span>
+                                            <div class="flex items-center space-x-1.5">
+                                                @if (!string.IsNullOrEmpty(prod.Badge))
+                                                {
+                                                    <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md border border-emerald-200/50">
+                                                        @prod.Badge
+                                                    </span>
+                                                }
+                                                <span class="text-[11px] font-bold text-amber-600 flex items-center">
+                                                    ★ @prod.Rating.ToString("0.0")
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <!-- Icon & Name -->
+                                        <div class="flex items-start space-x-3 mb-2">
+                                            <div class="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center border border-slate-100 shrink-0 group-hover:scale-105 transition-transform">
+                                                @if (prod.IconName == "Activity")
+                                                {
+                                                    <Blazicon Svg="Lucide.Activity" class="w-5 h-5 text-sky-600" />
+                                                }
+                                                else if (prod.IconName == "Package")
+                                                {
+                                                    <Blazicon Svg="Lucide.Package" class="w-5 h-5 text-amber-600" />
+                                                }
+                                                else
+                                                {
+                                                    <Blazicon Svg="Lucide.ShoppingBag" class="w-5 h-5 text-emerald-600" />
+                                                }
+                                            </div>
+                                            <div>
+                                                <h4 class="font-bold text-slate-900 text-sm leading-tight">@prod.Name</h4>
+                                                <div class="text-[11px] text-emerald-600 font-semibold mt-0.5 flex items-center space-x-1">
+                                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                                    <span>In Stock</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Description -->
+                                        <p class="text-xs text-slate-500 line-clamp-2 leading-relaxed mb-4">
+                                            @prod.Description
+                                        </p>
+                                    </div>
+
+                                    <!-- Price & Actions Footer -->
+                                    <div class="pt-3 border-t border-slate-100 space-y-3">
+                                        <div class="flex items-center justify-between">
+                                            <div>
+                                                <div class="text-[10px] text-slate-400 font-medium">Price</div>
+                                                <div class="text-base font-extrabold text-slate-900">R @prod.Price.ToString("N2")</div>
+                                            </div>
+                                            <!-- Quantity selector -->
+                                            <div class="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg p-0.5">
+                                                <button @onclick="() => DecreaseQuantity(prod.Id)" class="w-6 h-6 rounded flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-white transition-colors cursor-pointer text-xs font-bold">
+                                                    -
+                                                </button>
+                                                <span class="w-6 text-center text-xs font-bold text-slate-800">@currentQty</span>
+                                                <button @onclick="() => IncreaseQuantity(prod.Id)" class="w-6 h-6 rounded flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-white transition-colors cursor-pointer text-xs font-bold">
+                                                    +
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <button @onclick="() => AddToBasket(prod)" class="py-2 px-2.5 rounded-lg border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/50 text-slate-700 hover:text-emerald-800 font-semibold text-xs transition-colors flex items-center justify-center space-x-1 cursor-pointer">
+                                                <Blazicon Svg="Lucide.ShoppingCart" class="w-3.5 h-3.5" />
+                                                <span>Add</span>
+                                            </button>
+                                            <button @onclick="() => PlaceMarketplaceOrder(prod)" class="py-2 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs transition-colors flex items-center justify-center space-x-1 cursor-pointer">
+                                                <span>Buy Now</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <!-- Modal Footer -->
+                <div class="px-6 py-4 border-t border-slate-100 flex items-center justify-between bg-white">
+                    <div class="text-xs text-slate-500">
+                        Orders are dispatched directly from accredited QPharmacy retail hubs.
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <button @onclick="ToggleMarketplaceModal" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors cursor-pointer">
+                            Close
+                        </button>
+                        @if (CartTotalCount > 0)
+                        {
+                            <button @onclick="CheckoutBasketAsync" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5">
+                                <span>Proceed with Basket (R @CartTotalPrice.ToString("N2"))</span>
+                                <Blazicon Svg="Lucide.ArrowRight" class="w-3.5 h-3.5" />
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Interactive Checkout & Settlement Modal -->
+    @if (showCheckoutModal && checkoutOrder != null)
+    {
+        <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-xl w-full mx-4 p-6 animate-in fade-in zoom-in-95 duration-200">
+                <!-- Modal Header -->
+                <div class="flex justify-between items-start pb-4 border-b border-slate-100">
+                    <div>
+                        <div class="flex items-center space-x-2">
+                            <span class="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2 py-0.5 rounded">Checkout</span>
+                            <h3 class="text-lg font-bold text-slate-900">Order #@checkoutOrder.OrderNumber</h3>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-1">Total Payable: <strong class="text-base text-slate-900 font-bold">R @checkoutOrder.TotalAmount.ToString("N2")</strong></p>
+                    </div>
+                    <button @onclick="CloseCheckoutModal" class="text-slate-400 hover:text-slate-600 transition-colors p-1 cursor-pointer">
+                        <Blazicon Svg="Lucide.X" class="w-5 h-5" />
+                    </button>
+                </div>
+
+                <!-- Error message alert -->
+                @if (!string.IsNullOrEmpty(paymentErrorMessage))
+                {
+                    <div class="mt-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start space-x-2">
+                        <svg class="w-4 h-4 shrink-0 mt-0.5 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <span>@paymentErrorMessage</span>
+                    </div>
+                }
+
+                <!-- Payment Method Tabs -->
+                <div class="mt-5 grid grid-cols-3 gap-2 p-1 bg-slate-100 rounded-xl">
+                    <button @onclick='() => SetPaymentTab("MedicalAid")' class="py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer @(paymentTab == "MedicalAid" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900")">
+                        Medical Aid
+                    </button>
+                    <button @onclick='() => SetPaymentTab("Card")' class="py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer @(paymentTab == "Card" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900")">
+                        Card
+                    </button>
+                    <button @onclick='() => SetPaymentTab("Split")' class="py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer @(paymentTab == "Split" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900")">
+                        Split Payment
+                    </button>
+                </div>
+
+                <!-- Tab 1: Medical Aid Adjudication -->
+                @if (paymentTab == "MedicalAid")
+                {
+                    <div class="mt-5 space-y-4">
+                        @if (medicalAid == null)
+                        {
+                            <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                                No active medical aid profile linked. Please select Card payment or add a medical aid in the Payments tab.
+                            </div>
+                        }
+                        else
+                        {
+                            var available = medicalAid.AnnualLimit - medicalAid.AmountUsed;
+                            var coversAll = available >= checkoutOrder.TotalAmount;
+
+                            <div class="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Scheme &amp; Plan</span>
+                                    <span class="text-xs font-bold text-slate-900">@medicalAid.SchemeName &middot; @medicalAid.PlanName</span>
+                                </div>
+                                <div class="flex justify-between items-center text-xs text-slate-600">
+                                    <span>Member Number:</span>
+                                    <span class="font-medium text-slate-800">@medicalAid.MemberNumber</span>
+                                </div>
+                                <div class="flex justify-between items-center text-xs text-slate-600">
+                                    <span>Available Benefit Limit:</span>
+                                    <span class="font-bold text-emerald-700">R @available.ToString("N2")</span>
+                                </div>
+                            </div>
+
+                            @if (coversAll)
+                            {
+                                <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center space-x-2">
+                                    <Blazicon Svg="Lucide.Check" class="w-4 h-4 text-emerald-600 shrink-0" />
+                                    <span>100% of this order is covered by your annual medication benefit!</span>
+                                </div>
+
+                                <button disabled="@isProcessingPayment" @onclick="SubmitMedicalAidPayment" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 px-4 rounded-xl transition-colors shadow-sm flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50">
+                                    @if (isProcessingPayment)
+                                    {
+                                        <svg class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                        </svg>
+                                        <span>Adjudicating claim...</span>
+                                    }
+                                    else
+                                    {
+                                        <Blazicon Svg="Lucide.ShieldCheck" class="w-4 h-4" />
+                                        <span>Submit Medical Aid Claim (R @checkoutOrder.TotalAmount.ToString("N2"))</span>
+                                    }
+                                </button>
+                            }
+                            else
+                            {
+                                <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                                    Your available limit (R @available.ToString("N2")) is lower than the order total (R @checkoutOrder.TotalAmount.ToString("N2")).
+                                    Please use <strong>Split Payment</strong> to pay the remaining portion by card.
+                                </div>
+                                <button @onclick='() => SetPaymentTab("Split")' class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 px-4 rounded-xl transition-colors text-xs cursor-pointer">
+                                    Switch to Split Payment
+                                </button>
+                            }
+                        }
+                    </div>
+                }
+
+                <!-- Tab 2: Card Payment -->
+                @if (paymentTab == "Card")
+                {
+                    <div class="mt-5 space-y-4">
+                        @if (savedPaymentMethods == null || !savedPaymentMethods.Any())
+                        {
+                            <div class="p-4 rounded-xl border-2 border-dashed border-slate-200 text-center text-xs text-slate-500">
+                                No saved payment cards found.
+                            </div>
+                        }
+                        else
+                        {
+                            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Select Saved Card</label>
+                            <div class="space-y-2 max-h-48 overflow-y-auto">
+                                @foreach (var card in savedPaymentMethods)
+                                {
+                                    <label class="flex items-center justify-between p-3 rounded-xl border transition-colors cursor-pointer @(selectedCardId == card.Id ? "border-emerald-600 bg-emerald-50/20" : "border-slate-200 hover:bg-slate-50")">
+                                        <div class="flex items-center space-x-3">
+                                            <input type="radio" name="cardSelect" checked="@(selectedCardId == card.Id)" @onchange="() => selectedCardId = card.Id" class="text-emerald-600 focus:ring-emerald-500" />
+                                            <div class="text-xs">
+                                                <span class="font-bold text-slate-900">@card.CardType &bull;&bull;&bull;&bull; @card.LastFour</span>
+                                                <span class="text-slate-400 ml-2">Exp @card.ExpiryDate</span>
+                                            </div>
+                                        </div>
+                                        @if (card.IsDefault)
+                                        {
+                                            <span class="text-xxs font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Default</span>
+                                        }
+                                    </label>
+                                }
+                            </div>
+                        }
+
+                        <!-- CVV verification input (NEVER persisted to DB) -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Card Security Code (CVV)</label>
+                            <div class="flex items-center space-x-3">
+                                <input type="password" maxlength="4" placeholder="•••" @bind="cardCvvInput" autocomplete="cc-csc" class="w-24 rounded-lg border border-slate-200 p-2 text-xs focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" />
+                                <span class="text-xxs text-slate-400">Tokenized &amp; processed securely via gateway. Never saved.</span>
+                            </div>
+                        </div>
+
+                        <button disabled="@isProcessingPayment" @onclick="SubmitCardPayment" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3 px-4 rounded-xl transition-colors shadow-sm flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50">
+                            @if (isProcessingPayment)
+                            {
+                                <svg class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                </svg>
+                                <span>Authorizing card charge...</span>
+                            }
+                            else
+                            {
+                                <Blazicon Svg="Lucide.CreditCard" class="w-4 h-4" />
+                                <span>Charge Card (R @checkoutOrder.TotalAmount.ToString("N2"))</span>
+                            }
+                        </button>
+                    </div>
+                }
+
+                <!-- Tab 3: Split Payment -->
+                @if (paymentTab == "Split")
+                {
+                    <div class="mt-5 space-y-4">
+                        @if (medicalAid == null)
+                        {
+                            <div class="p-3 bg-amber-50 text-amber-800 text-xs rounded-lg">
+                                Medical Aid cover is required for split payments.
+                            </div>
+                        }
+                        else
+                        {
+                            var maxAvailable = medicalAid.AnnualLimit - medicalAid.AmountUsed;
+                            <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
+                                <div class="flex justify-between font-semibold text-slate-900">
+                                    <span>Total Order:</span>
+                                    <span>R @checkoutOrder.TotalAmount.ToString("N2")</span>
+                                </div>
+                                <div class="flex justify-between text-slate-500">
+                                    <span>Available Benefit Limit:</span>
+                                    <span class="text-emerald-700 font-bold">R @maxAvailable.ToString("N2")</span>
+                                </div>
+                            </div>
+
+                            <!-- Slider/inputs -->
+                            <div class="space-y-2">
+                                <div class="flex justify-between text-xs font-semibold text-slate-700">
+                                    <span>Medical Aid Contribution:</span>
+                                    <span class="text-emerald-600 font-bold">R @splitMedicalAidAmount.ToString("N2")</span>
+                                </div>
+                                <input type="range" min="0" max="@((int)Math.Min(checkoutOrder.TotalAmount, maxAvailable))" step="5" @bind="splitMedicalAidSlider" @bind:after="OnSplitSliderChanged" class="w-full accent-emerald-600" />
+                                <div class="flex justify-between text-xxs text-slate-400">
+                                    <span>R 0.00</span>
+                                    <span>Max Benefit: R @Math.Min(checkoutOrder.TotalAmount, maxAvailable).ToString("N2")</span>
+                                </div>
+                            </div>
+
+                            <div class="p-3 rounded-xl border border-slate-200 space-y-2 bg-slate-50/50">
+                                <div class="flex justify-between text-xs font-semibold text-slate-700">
+                                    <span>Remaining by Card:</span>
+                                    <span class="text-slate-900 font-bold">R @splitCardAmount.ToString("N2")</span>
+                                </div>
+
+                                @if (savedPaymentMethods != null && savedPaymentMethods.Any())
+                                {
+                                    <select @bind="selectedCardId" class="w-full rounded-lg border border-slate-200 p-2 text-xs bg-white">
+                                        @foreach (var c in savedPaymentMethods)
+                                        {
+                                            <option value="@c.Id">@c.CardType •••• @c.LastFour (Exp @c.ExpiryDate)</option>
+                                        }
+                                    </select>
+                                }
+                            </div>
+
+                            <button disabled="@isProcessingPayment" @onclick="SubmitSplitPayment" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 px-4 rounded-xl transition-colors shadow-sm flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50">
+                                @if (isProcessingPayment)
+                                {
+                                    <svg class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                    </svg>
+                                    <span>Processing split payment...</span>
+                                }
+                                else
+                                {
+                                    <Blazicon Svg="Lucide.Check" class="w-4 h-4" />
+                                    <span>Confirm Split (R @splitMedicalAidAmount.ToString("N2") + R @splitCardAmount.ToString("N2"))</span>
+                                }
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .text-xxs {
+        font-size: 0.65rem;
+    }
+</style>
+
+@code {
+    private OrderModel? activeOrder;
+    private List<OrderModel> orderHistory = new();
+    private List<MarketplaceProductModel> marketplaceProducts = new();
+    private string selectedMarketplaceCategory = "All";
+    private string marketplaceSearchQuery = string.Empty;
+    private Dictionary<Guid, int> productQuantities = new();
+    private Dictionary<Guid, int> cartItems = new();
+    
+    private string? notificationMessage;
+    private bool isLoading = true;
+    private bool showMarketplaceModal = false;
+    private Guid patientId = Guid.Empty;
+
+    // Checkout Modal State
+    private bool showCheckoutModal = false;
+    private OrderModel? checkoutOrder;
+    private string paymentTab = "MedicalAid"; // MedicalAid, Card, Split
+    private MedicalAidModel? medicalAid;
+    private List<PaymentMethodModel> savedPaymentMethods = new();
+    private Guid selectedCardId = Guid.Empty;
+    private string cardCvvInput = string.Empty;
+    private decimal splitMedicalAidAmount = 0;
+    private decimal splitCardAmount = 0;
+    private int splitMedicalAidSlider = 0;
+    private bool isProcessingPayment = false;
+    private string? paymentErrorMessage;
+    private System.Threading.CancellationTokenSource? _cts;
+    private bool isManualRefreshing = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var storedId = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", "authUserId");
+        if (Guid.TryParse(storedId, out var parsedId))
+        {
+            patientId = parsedId;
+        }
+
+        await LoadDataAsync();
+        StartBackgroundPolling();
+    }
+
+    private void StartBackgroundPolling()
+    {
+        _cts?.Cancel();
+        _cts = new System.Threading.CancellationTokenSource();
+        var token = _cts.Token;
+        _ = Task.Run(async () =>
+        {
+            using var periodicTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            try
+            {
+                while (await periodicTimer.WaitForNextTickAsync(token))
+                {
+                    if (!showCheckoutModal && !showMarketplaceModal && patientId != Guid.Empty)
+                    {
+                        await RefreshOrdersSilentAsync();
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Patient Orders Poller] {ex.Message}");
+            }
+        }, token);
+    }
+
+    private async Task ManualRefreshAsync()
+    {
+        isManualRefreshing = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await RefreshOrdersSilentAsync();
+        }
+        finally
+        {
+            isManualRefreshing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RefreshOrdersSilentAsync()
+    {
+        try
+        {
+            var activeOrderTask = PatientService.GetActiveOrderAsync(patientId);
+            var historyTask = PatientService.GetOrderHistoryAsync(patientId);
+            await Task.WhenAll(activeOrderTask, historyTask);
+
+            activeOrder = await activeOrderTask;
+            orderHistory = (await historyTask).ToList();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            var activeOrderTask = PatientService.GetActiveOrderAsync(patientId);
+            var historyTask = PatientService.GetOrderHistoryAsync(patientId);
+            var marketplaceTask = PatientService.GetMarketplaceProductsAsync();
+            var medicalAidTask = PaymentService.GetMedicalAidForPatientAsync(patientId);
+            var cardsTask = PatientService.GetSavedPaymentMethodsAsync(patientId);
+
+            await Task.WhenAll(activeOrderTask, historyTask, marketplaceTask, medicalAidTask, cardsTask);
+
+            activeOrder = await activeOrderTask;
+            orderHistory = (await historyTask).ToList();
+            marketplaceProducts = (await marketplaceTask).ToList();
+            medicalAid = await medicalAidTask;
+            savedPaymentMethods = (await cardsTask).ToList();
+
+            if (savedPaymentMethods.Any())
+            {
+                var defaultCard = savedPaymentMethods.FirstOrDefault(c => c.IsDefault) ?? savedPaymentMethods.First();
+                selectedCardId = defaultCard.Id;
+            }
+
+            // Handle fast path navigation query param
+            var uri = NavigationManager.Uri;
+            if (uri.Contains("?"))
+            {
+                var query = uri.Substring(uri.IndexOf("?") + 1);
+                if (query.Split('&').Any(p => p.Equals("openMarketplace=true", StringComparison.OrdinalIgnoreCase)))
+                {
+                    showMarketplaceModal = true;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing orders page: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private IEnumerable<MarketplaceProductModel> FilteredMarketplaceProducts
+    {
+        get
+        {
+            var items = (IEnumerable<MarketplaceProductModel>)marketplaceProducts;
+            if (!string.IsNullOrWhiteSpace(selectedMarketplaceCategory) && selectedMarketplaceCategory != "All")
+            {
+                items = items.Where(p => p.Category != null && p.Category.Contains(selectedMarketplaceCategory.Split('&')[0].Trim(), StringComparison.OrdinalIgnoreCase));
+            }
+            if (!string.IsNullOrWhiteSpace(marketplaceSearchQuery))
+            {
+                var query = marketplaceSearchQuery.Trim();
+                items = items.Where(p => (p.Name != null && p.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                                      || (p.Description != null && p.Description.Contains(query, StringComparison.OrdinalIgnoreCase))
+                                      || (p.Category != null && p.Category.Contains(query, StringComparison.OrdinalIgnoreCase)));
+            }
+            return items;
+        }
+    }
+
+    private void OpenCheckout(OrderModel order)
+    {
+        checkoutOrder = order;
+        paymentErrorMessage = null;
+        cardCvvInput = string.Empty;
+
+        // Auto-configure split amounts
+        if (medicalAid != null)
+        {
+            var available = Math.Max(0, medicalAid.AnnualLimit - medicalAid.AmountUsed);
+            splitMedicalAidAmount = Math.Min(order.TotalAmount, available);
+            splitMedicalAidSlider = (int)splitMedicalAidAmount;
+            splitCardAmount = Math.Max(0, order.TotalAmount - splitMedicalAidAmount);
+
+            // Select medical aid tab if covered, or split if insufficient
+            if (available >= order.TotalAmount)
+            {
+                paymentTab = "MedicalAid";
+            }
+            else if (available > 0)
+            {
+                paymentTab = "Split";
+            }
+            else
+            {
+                paymentTab = "Card";
+            }
+        }
+        else
+        {
+            paymentTab = "Card";
+            splitMedicalAidAmount = 0;
+            splitCardAmount = order.TotalAmount;
+        }
+
+        showCheckoutModal = true;
+        StateHasChanged();
+    }
+
+    private void CloseCheckoutModal()
+    {
+        showCheckoutModal = false;
+        checkoutOrder = null;
+        paymentErrorMessage = null;
+    }
+
+    private void SetPaymentTab(string tab)
+    {
+        paymentTab = tab;
+        paymentErrorMessage = null;
+    }
+
+    private void OnSplitSliderChanged()
+    {
+        if (checkoutOrder == null) return;
+        splitMedicalAidAmount = splitMedicalAidSlider;
+        splitCardAmount = Math.Max(0, checkoutOrder.TotalAmount - splitMedicalAidAmount);
+    }
+
+    private async Task SubmitMedicalAidPayment()
+    {
+        if (checkoutOrder == null) return;
+        await ExecutePaymentProcess(new ProcessPaymentRequest
+        {
+            OrderId = checkoutOrder.Id,
+            OrderNumber = checkoutOrder.OrderNumber,
+            PatientId = patientId,
+            TotalAmount = checkoutOrder.TotalAmount,
+            PaymentType = "MedicalAid",
+            MedicalAidAmount = checkoutOrder.TotalAmount,
+            CardAmount = 0
+        });
+    }
+
+    private async Task SubmitCardPayment()
+    {
+        if (checkoutOrder == null) return;
+        await ExecutePaymentProcess(new ProcessPaymentRequest
+        {
+            OrderId = checkoutOrder.Id,
+            OrderNumber = checkoutOrder.OrderNumber,
+            PatientId = patientId,
+            TotalAmount = checkoutOrder.TotalAmount,
+            PaymentType = "Card",
+            MedicalAidAmount = 0,
+            CardAmount = checkoutOrder.TotalAmount,
+            CardPaymentMethodId = selectedCardId != Guid.Empty ? selectedCardId : null
+        });
+    }
+
+    private async Task SubmitSplitPayment()
+    {
+        if (checkoutOrder == null) return;
+        await ExecutePaymentProcess(new ProcessPaymentRequest
+        {
+            OrderId = checkoutOrder.Id,
+            OrderNumber = checkoutOrder.OrderNumber,
+            PatientId = patientId,
+            TotalAmount = checkoutOrder.TotalAmount,
+            PaymentType = "Split",
+            MedicalAidAmount = splitMedicalAidAmount,
+            CardAmount = splitCardAmount,
+            CardPaymentMethodId = selectedCardId != Guid.Empty ? selectedCardId : null
+        });
+    }
+
+    private async Task ExecutePaymentProcess(ProcessPaymentRequest request)
+    {
+        isProcessingPayment = true;
+        paymentErrorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await PaymentService.ProcessPaymentAsync(request);
+            if (result.Success)
+            {
+                notificationMessage = $"Payment confirmed for order {request.OrderNumber}! Status: Paid.";
+                showCheckoutModal = false;
+
+                // Refresh orders & medical aid
+                await LoadDataAsync();
+            }
+            else
+            {
+                paymentErrorMessage = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            paymentErrorMessage = $"An error occurred during payment processing: {ex.Message}";
+        }
+        finally
+        {
+            isProcessingPayment = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private int GetQuantity(Guid prodId)
+    {
+        return productQuantities.TryGetValue(prodId, out var qty) ? qty : 1;
+    }
+
+    private void IncreaseQuantity(Guid prodId)
+    {
+        var current = GetQuantity(prodId);
+        if (current < 20)
+        {
+            productQuantities[prodId] = current + 1;
+        }
+    }
+
+    private void DecreaseQuantity(Guid prodId)
+    {
+        var current = GetQuantity(prodId);
+        if (current > 1)
+        {
+            productQuantities[prodId] = current - 1;
+        }
+    }
+
+    private int CartTotalCount => cartItems.Values.Sum();
+    private decimal CartTotalPrice => cartItems.Sum(kv => (marketplaceProducts.FirstOrDefault(p => p.Id == kv.Key)?.Price ?? 0m) * kv.Value);
+
+    private void AddToBasket(MarketplaceProductModel prod)
+    {
+        var qty = GetQuantity(prod.Id);
+        if (cartItems.ContainsKey(prod.Id))
+        {
+            cartItems[prod.Id] += qty;
+        }
+        else
+        {
+            cartItems[prod.Id] = qty;
+        }
+        ShowToast($"{prod.Name} (x{qty}) added to basket!");
+    }
+
+    private void ClearBasket()
+    {
+        cartItems.Clear();
+        ShowToast("Basket cleared.");
+    }
+
+    private void DismissNotification()
+    {
+        notificationMessage = null;
+    }
+
+    private void NavigateToFullMarketplace()
+    {
+        ToggleMarketplaceModal();
+    }
+
+    private void ToggleMarketplaceModal()
+    {
+        showMarketplaceModal = !showMarketplaceModal;
+    }
+
+    private async Task PlaceMarketplaceOrder(MarketplaceProductModel prod)
+    {
+        var qty = GetQuantity(prod.Id);
+        var total = prod.Price * qty;
+        var randomNum = new Random().Next(1050, 9999);
+        var newOrderNum = $"QP-{randomNum}";
+
+        var newOrder = new OrderModel
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = newOrderNum,
+            PatientId = patientId,
+            OrderDate = DateTime.Now,
+            TotalAmount = total,
+            Status = "Dispensed",
+            ItemsCount = qty,
+            DispatchedFrom = "Clicks, Claremont",
+            PaymentStatus = "Unpaid"
+        };
+
+        try
+        {
+            await PatientService.CreateOrderAsync(newOrder);
+            if (!orderHistory.Any(o => o.OrderNumber == newOrder.OrderNumber))
+            {
+                orderHistory.Insert(0, newOrder);
+            }
+            activeOrder = newOrder;
+            showMarketplaceModal = false;
+            ShowToast($"Order {newOrderNum} created for {prod.Name}. Proceed to payment.");
+            OpenCheckout(newOrder);
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Error creating order: {ex.Message}");
+        }
+    }
+
+    private async Task CheckoutBasketAsync()
+    {
+        if (!cartItems.Any()) return;
+
+        var totalItems = CartTotalCount;
+        var totalAmount = CartTotalPrice;
+        var randomNum = new Random().Next(1050, 9999);
+        var newOrderNum = $"QP-{randomNum}";
+
+        var newOrder = new OrderModel
+        {
+            Id = Guid.NewGuid(),
+            OrderNumber = newOrderNum,
+            PatientId = patientId,
+            OrderDate = DateTime.Now,
+            TotalAmount = totalAmount,
+            Status = "Dispensed",
+            ItemsCount = totalItems,
+            DispatchedFrom = "Clicks, Claremont",
+            PaymentStatus = "Unpaid"
+        };
+
+        try
+        {
+            await PatientService.CreateOrderAsync(newOrder);
+            if (!orderHistory.Any(o => o.OrderNumber == newOrder.OrderNumber))
+            {
+                orderHistory.Insert(0, newOrder);
+            }
+            activeOrder = newOrder;
+            cartItems.Clear();
+            showMarketplaceModal = false;
+            ShowToast($"Wellness basket order {newOrderNum} created! Select payment method.");
+            OpenCheckout(newOrder);
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Error checking out basket: {ex.Message}");
+        }
+    }
+
+    private void ShowToast(string message)
+    {
+        notificationMessage = message;
+        StateHasChanged();
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3500);
+            notificationMessage = null;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+}
